@@ -1,7 +1,25 @@
 # SliceQ 开发任务拆解（交接 DeepSeek-V4.1-Flash）
 
-> 版本：v1.21｜日期：2026-09-27
+> 版本：v1.22｜日期：2026-09-27
 > 用法：本文件按阶段交接。每阶段开头有【交接提示词】，可直接粘贴给 deepseek-flash 开工作会话；阶段完成后按【验收标准】逐条验证，通过再进下一阶段。配合阅读：PRD-SliceQ.md（需求）、TECH-DESIGN.md（架构）、reports/ 与 stage0/reports/（各阶段实测证据）。
+>
+> **🔄 v1.22 变更（阶段 6 进行中：打包实测通过 + 发布前处理完成）**：
+> 1. **打包实测一次通过**：`exe = 60MB`（预算 150MB，宽裕一倍多）。
+>    合规检查：直接读 exe 的 TOC（271 条目），**无任何 ffmpeg/ffprobe**。
+> 2. **★ 新技法：冻结程序的"可验证启动"** —— 沙箱里也能验 GUI：
+>    `APPDATA=<隔离目录> QT_QPA_PLATFORM=offscreen timeout 40 ./SliceQ.exe`
+>    → rc=124（一直在跑）+ 建出 `db/sliceq.db` + 日志有"数据库就绪"
+>    ⇒ 证明**冻结后路径解析正确**（全项目 0 处 `__file__` 引用，数据根走 `%APPDATA%`）。
+> 3. **发布前处理**：
+>    - 排除 `stage0/test_media/`(316MB) 与 `test_drafts/`(66MB) + 含用户草稿列表的
+>      `root_meta_info.backup.json` ⇒ **入库从 384MB 压到 2.4MB（151 文件）**
+>    - **批量脱敏**本机用户名路径（19 文件 / 31 处，全为路径形态，`.py` 语法验证通过）
+>    - 补 `LICENSE`(MIT) / `.gitignore` / `.gitattributes`
+>    - `requirements` 由 `PySide6` 改为 **`PySide6-Essentials`**（避免拉进约 1.2GB Addons）
+>    - README 重写为**中英双语**（含第三方声明 / 免责声明 / 剪映手动导出 / 达芬奇两条注意）
+>    - 新增 `DISCLAIMER.md`（独立）+ `docs/RELEASE-v0.1.0.md`
+> 4. **阻塞项**（需用户配合，见阶段 6 末尾）：
+>    gh 令牌超时需重新授权；"干净机器"验证本机无虚拟机。
 >
 > **🔴 v1.21 变更（真机验收后续：修一个 P0 缺陷 + R20 定论）**：
 > 1. **🔴 修复 P0 缺陷：OTIO 缺少音频轨** —— 用户真机报告"达芬奇里没有音频"。
@@ -785,10 +803,48 @@
 > 4. GitHub 仓库初始化 + 打 tag v0.1.0 + 发布 Release（附 exe）。
 
 【验收标准】
-- [ ] 干净机器双击 exe 全流程跑通（阶段 1~5 验收点抽查）
-- [ ] 打包产物中**不含** ffmpeg.exe（合规检查）
-- [ ] GitHub 仓库公开、Release 附件可下载、版本号规范
-- [ ] README 含全部必需声明
+（状态截至 2026-09-27 晚；阶段 6 进行中）
+
+- [x] **打包产物中不含 ffmpeg.exe**（合规检查）
+      **判据**：读 exe 的 PyInstaller TOC（271 条目），扫 `.exe/.dll` 里含
+      `ffmpeg`/`ffprobe` 的条目 → **0 命中**
+- [x] **exe 体积在预算内**：**60 MB**（目标 ≤150MB）
+- [x] **冻结后可正常启动**（路径解析正确）
+      **判据**：隔离 `APPDATA` + `QT_QPA_PLATFORM=offscreen` 启动 →
+      rc=124（持续运行）+ 建出 `db/sliceq.db` + 日志有"数据库就绪"
+- [x] **README 含全部必需声明**（中英双语：README.md / README.en.md）
+      含：第三方组件声明、免责声明（另有独立 `DISCLAIMER.md`）、
+      剪映需手动导出、达芬奇两条注意事项、数据存放位置、成本说明
+- [ ] **干净机器双击 exe 全流程跑通**（阶段 1~5 验收点抽查）← 🔴 **阻塞**
+      本机无虚拟机；已用"隔离 APPDATA + offscreen"覆盖了启动与路径，
+      **缺**真实 GUI 交互与首次下载（FFmpeg 180MB + 模型 1.8GB）流程。
+      方案见下方"阻塞项"。
+- [ ] **GitHub 仓库公开、Release 附件可下载、版本号规范** ← 🔴 **阻塞**
+      gh 已安装（账号 `cunnak`）但**令牌超时**，需重新走设备码授权。
+      版本号单一来源已确认（`sliceq/config.py: VERSION = "0.1.0"`）。
+
+【发布前处理（已完成）】
+
+- 排除测试素材（382MB，含第三方录播）与含个人数据的索引备份 ⇒ 入库 384MB → **2.4MB**
+- 批量脱敏本机用户名路径（19 文件 / 31 处）
+- 补 `LICENSE` / `.gitignore` / `.gitattributes`
+- `requirements` 改 `PySide6-Essentials`（避免拉进 1.2GB Addons）
+- README 中英双语 + `DISCLAIMER.md` + `docs/RELEASE-v0.1.0.md`
+
+【阻塞项（需用户配合）】
+
+1. **干净机器验证**：本机**无任何虚拟机**（无 VirtualBox/VMware/镜像/WSL 发行版）。
+   用户系统是 **Windows 11 Pro**，自带 **Windows Sandbox**（轻量、关闭即销毁）
+   —— 但**当前未启用**，启用需勾选 Windows 功能并**重启一次**。
+   ⚠️ **副作用提醒**：启用 Sandbox 会连带打开 Hyper-V / 虚拟机平台，
+   **可能影响本机的 MuMu 模拟器与 MAA**（明日方舟）。需用户权衡。
+   备选：装 VirtualBox + 下载 Windows ISO（约 5GB）；或降级为"新建干净用户"验证。
+2. **gh 授权**：`gh auth status` 报 `Timeout trying to log in ... (keyring)`。
+   需重新执行设备码授权（用户操作）。若为网络问题，按 `github-publish-win`
+   skill 的"坑 1"处理（配 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量）。
+3. **截图与图标**：**README 目前不含截图**（刻意不放占位图以免死链）——
+   需要用户在真实 GUI 里操作获取后补入（建议 `docs/images/`）；
+   exe 目前**无自定义图标**（用 PyInstaller 默认图标）。
 
 ---
 
