@@ -1,0 +1,863 @@
+# -*- coding: utf-8 -*-
+"""三端草稿导出（阶段 5）：剪映草稿 / 达芬奇 OTIO / 降级包。
+
+## 产出形态
+
+    剪映草稿   %LOCALAPPDATA%/JianyingPro/User Data/Projects/com.lveditor.draft/<名字>/
+                 视频轨（引用源片 + 源内裁剪）+ 字幕轨 + 标题轨
+    达芬奇     <名字>.otio（甲方案：引用源片 + source_range）
+                 + <名字>.srt（字幕并行交付）+ 导入说明.txt
+    降级包     每条候选一个 mp4 + SRT + 导入说明.txt
+                 （剪映通道不可用或失败时自动退回）
+
+## ★ 字幕时间轴必须重映射（本模块最容易错、且错了不报错的地方）
+
+剪映与达芬奇都是「**多条高光拼成一条时间线**」，与阶段 3 的「乙方案」不同 ——
+乙方案是每条候选一个独立 mp4，所以那时时间轴只需一次减法
+（`subtitle.remap_to_clip`）。这里是**跨段累加**：
+
+    timeline_t = source_t - highlights[i].start + Σ(highlights[0..i-1].duration)
+
+用 `subtitle.remap_to_timeline()`。**漏做不会报错**，只是字幕整体错位
+（SRT 依然合法、剪映照常接受）—— 属"功能正常、结果全错"类缺陷。
+
+## ⚠️ 字幕**样式**不跟随导出（必须在 UI 明说）
+
+阶段 3/4 的字幕样式系统（字体 / 白字黑边 / 双语排版）在这两条通道里**都不生效**：
+
+    · 剪映  —— `import_srt` 用剪映自己的默认字幕样式
+    · 达芬奇 —— OTIO **根本不承载字幕**（OTIO 0.18.1 无 Text 轨类型，R19），
+                字幕靠并行的 SRT 单独导入
+
+## 实测约束（都踩过，勿改）
+
+1. **片段时长必须夹进素材真实时长** —— 超界会让剪映的 `VideoSegment`
+   直接抛 `ValueError`（实测：选到 9000s 而素材只有 8958.9s）。
+2. **`ExternalReference.available_range` 要写素材真实总时长** ——
+   不是 0、也不是片段时长；它表示"这个媒体文件总共有多长"，
+   达芬奇据此判断引用是否有效。
+3. **`draft_meta_info.json` 的 `draft_name`/`draft_fold_path`/`draft_root_path`
+   默认是空串**，必须手动补。
+4. **草稿名不要重复加前缀**（第一版拼出 `SliceQ_SliceQ_阶段5实测`）。
+5. **中文草稿名可用**，无需转拼音；剪映只扫自己的草稿目录，不扫任意路径。
+6. **不用 `allow_replace=True`** —— 它会静默覆盖用户的既有草稿，
+   把用户在剪映里精修过的版本抹掉。改用 `_unique_name()` 自动避让。
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Iterable, Sequence
+
+from . import config, ffmpeg_tools, subtitle, subtitle_style
+
+ProgressCb = Callable[[int, int, str], None]
+CancelCb = Callable[[], bool]
+
+
+class ExporterError(Exception):
+    """导出失败（消息面向用户，中文）。"""
+
+
+# ─────────────────────────────────────────────────────────────
+# 数据对象
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class Highlight:
+    """时间线上的一段。`title` 会进剪映标题轨与 OTIO 的 Clip.name。"""
+
+    start: float
+    end: float
+    title: str = ""
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.end - self.start)
+
+
+@dataclass
+class MediaInfo:
+    width: int = 0
+    height: int = 0
+    fps: float = config.DEFAULT_FPS
+    duration: float = 0.0
+
+    @property
+    def ok(self) -> bool:
+        return self.width > 0 and self.height > 0
+
+
+@dataclass
+class ChannelResult:
+    """一个通道的产出。"""
+
+    name: str = ""
+    ok: bool = False
+    out_dir: Path | None = None
+    files: list[str] = field(default_factory=list)
+    message: str = ""
+    error: str = ""
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "ok": self.ok,
+                "out_dir": str(self.out_dir) if self.out_dir else "",
+                "files": list(self.files), "message": self.message,
+                "error": self.error}
+
+
+@dataclass
+class DraftResult:
+    ok: bool = False
+    channels: dict[str, ChannelResult] = field(default_factory=dict)
+    out_dir: Path | None = None
+    highlights: list[Highlight] = field(default_factory=list)
+    cue_count: int = 0
+    dropped_cues: int = 0
+    notes: list[str] = field(default_factory=list)
+    error: str = ""
+
+    def ok_channels(self) -> list[str]:
+        return [k for k, v in self.channels.items() if v.ok]
+
+
+# ─────────────────────────────────────────────────────────────
+# 素材探测
+# ─────────────────────────────────────────────────────────────
+def probe_media(media: str | Path) -> MediaInfo:
+    """探测像素尺寸 / 帧率 / 总时长。
+
+    尺寸复用 `ffmpeg_tools.probe_video_size()`（它**已处理旋转元数据** ——
+    用编码尺寸去设画布会让竖屏素材的字幕按横屏排版）。
+
+    fps 与时长单独取一次。两者都要：
+      · fps   → OTIO 的 rate 与剪映草稿的 fps
+      · 时长  → 夹取片段（超界会让剪映抛 ValueError）
+    """
+    media = Path(media)
+    info = MediaInfo()
+    try:
+        info.width, info.height = ffmpeg_tools.probe_video_size(media)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+    ffprobe = ffmpeg_tools.find_ffprobe()
+    if not ffprobe:
+        return info
+    try:
+        r = subprocess.run(
+            [str(ffprobe), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=r_frame_rate",
+             "-show_entries", "format=duration",
+             "-of", "json", str(media)],
+            capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace")
+        data = json.loads(r.stdout or "{}")
+        streams = data.get("streams") or []
+        if streams:
+            rate = str(streams[0].get("r_frame_rate") or "")
+            if "/" in rate:
+                num, _, den = rate.partition("/")
+                if float(den or 0) > 0:
+                    info.fps = round(float(num) / float(den), 3) or info.fps
+        dur = (data.get("format") or {}).get("duration")
+        if dur:
+            info.duration = float(dur)
+    except Exception:                                       # noqa: BLE001
+        pass
+    return info
+
+
+# ─────────────────────────────────────────────────────────────
+# 剪映环境
+# ─────────────────────────────────────────────────────────────
+def jianying_draft_root() -> Path:
+    return Path(config.JIANYING_DRAFT_ROOT)
+
+
+def detect_jianying_version() -> tuple[str, bool]:
+    """返回 (版本号, 是否在已验证列表内)。
+
+    读 `Apps/` 下的版本目录名（阶段 0 定的方法，不依赖注册表 ——
+    受管机器上 `reg.exe` 会被安全策略阻止）。
+    """
+    apps = Path(config.JIANYING_APPS_DIR)
+    if not apps.is_dir():
+        return "", False
+    versions: list[str] = []
+    for d in apps.iterdir():
+        if d.is_dir() and re.fullmatch(r"\d+(\.\d+){1,3}", d.name or ""):
+            versions.append(d.name)
+    if not versions:
+        return "", False
+
+    def key(v: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+    newest = max(versions, key=key)
+    verified = newest in tuple(config.JIANYING_VERIFIED_VERSIONS)
+    if not verified:
+        # 也接受"同主版本+次版本"（例如 11.5.3.14501 的补丁号变了）
+        stem = ".".join(newest.split(".")[:3])
+        verified = any(v.startswith(stem) for v in config.JIANYING_VERIFIED_VERSIONS)
+    return newest, verified
+
+
+def jianying_ready() -> tuple[bool, str]:
+    """剪映通道是否可用，返回 (可用, 原因)。"""
+    try:
+        import pyJianYingDraft                                  # noqa: F401
+    except ImportError:
+        return False, ("未安装 pyJianYingDraft，无法生成剪映草稿。\n"
+                       "→ 执行 `pip install pyJianYingDraft` 后重试。")
+    root = jianying_draft_root()
+    if not root.parent.exists():
+        return False, (f"没有找到剪映的数据目录：\n  {root}\n"
+                       f"→ 请确认已安装剪映并至少打开过一次。")
+    return True, ""
+
+
+# ─────────────────────────────────────────────────────────────
+# 高光规划 / 唯一命名
+# ─────────────────────────────────────────────────────────────
+def plan_highlights(clips: Sequence[dict], *,
+                    media_duration: float = 0.0) -> list[Highlight]:
+    """把候选片段规范成时间线片段（含时长夹取）。
+
+    ⚠️ **必须夹进素材真实时长**。超界会让剪映的 `VideoSegment` 抛
+       `ValueError`（实测：挑到 9000s 而素材只有 8958.9s）。
+       好消息是它抛错而不是静默出错，但不该让用户碰到。
+    """
+    out: list[Highlight] = []
+    for i, c in enumerate(clips or [], 1):
+        try:
+            a = float(c.get("start") or 0.0)
+            b = float(c.get("end") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if b <= a:
+            continue
+        if media_duration > 0:
+            a = max(0.0, min(a, media_duration))
+            b = max(0.0, min(b, media_duration))
+            if b <= a:
+                continue
+        title = str(c.get("title_hint") or c.get("title") or "").strip()
+        if not title:
+            title = f"片段 {i}"
+        out.append(Highlight(start=round(a, 3), end=round(b, 3), title=title))
+    return out
+
+
+def _unique_name(root: Path, base: str, *, limit: int = 99) -> str:
+    """在 `root` 下找一个不与既有目录冲突的名字。
+
+    ⚠️ **不用 `allow_replace=True`**：它会静默覆盖同名草稿 ——
+       用户在剪映里精修过的版本会凭空消失，而且没有任何提示。
+       （前置实测报告 §5.3 记的就是这个遗留问题。）
+    """
+    safe = re.sub(r'[\\/:*?"<>|]+', "_", (base or "SliceQ草稿").strip()) or "SliceQ草稿"
+    safe = safe.strip(". ") or "SliceQ草稿"
+    if not (root / safe).exists():
+        return safe
+    for i in range(2, limit + 1):
+        cand = f"{safe} ({i})"
+        if not (root / cand).exists():
+            return cand
+    raise ExporterError(f"草稿目录下同名项太多，无法为「{safe}」找到可用名字。")
+
+
+# ─────────────────────────────────────────────────────────────
+# 字幕（重映射）
+# ─────────────────────────────────────────────────────────────
+def build_timeline_subtitles(segments: Iterable | None,
+                             highlights: Sequence[Highlight],
+                             *, out_path: Path,
+                             transport=None, use_llm: bool = True,
+                             bilingual: bool = False,
+                             progress: ProgressCb | None = None) -> dict:
+    """断句 → **跨段重映射** → 写 SRT。返回统计。
+
+    这是全模块唯一一处把源时间轴字幕搬到时间线时间轴的地方 ——
+    剪映的字幕轨、达芬奇并行的 SRT、降级包的 SRT 全都用它。
+    **不要在这里另写一份映射。**
+    """
+    segs = list(segments or [])
+    if not segs:
+        return {"srt": "", "cue_count": 0, "dropped": 0, "source_cues": 0}
+
+    all_cues, stats = subtitle.split_segments(
+        segs, transport=transport, use_llm=use_llm, progress=progress)
+    spells = [(h.start, h.end) for h in highlights]
+    # ★ 唯一的映射调用点（甲方案 · 跨段累加）
+    cues_tl, dropped = subtitle.remap_to_timeline(all_cues, spells)
+
+    srt = subtitle.write_srt(cues_tl, out_path, bilingual=bilingual)
+    return {"srt": str(srt), "cue_count": len(cues_tl), "dropped": dropped,
+            "source_cues": len(all_cues), **stats}
+
+
+# ─────────────────────────────────────────────────────────────
+# 通道 1：剪映草稿
+# ─────────────────────────────────────────────────────────────
+def export_jianying(video: str | Path, highlights: Sequence[Highlight], *,
+                    media: MediaInfo,
+                    timeline_srt: Path | None = None,
+                    draft_root: str | Path | None = None,
+                    name: str = "",
+                    work_dir: str | Path | None = None,
+                    make_titles: bool = True) -> ChannelResult:
+    """生成剪映草稿并部署到剪映的草稿目录。"""
+    res = ChannelResult(name="剪映草稿")
+    ok, why = jianying_ready()
+    if not ok:
+        res.error = why
+        return res
+
+    try:
+        import pyJianYingDraft as draft
+        from pyJianYingDraft import trange
+    except ImportError as exc:                              # noqa: BLE001
+        res.error = f"导入 pyJianYingDraft 失败：{exc}"
+        return res
+
+    video = Path(video).resolve()
+    root = Path(draft_root) if draft_root else jianying_draft_root()
+    root.mkdir(parents=True, exist_ok=True)
+    draft_name = _unique_name(root, name or video.stem)
+
+    stage = (Path(work_dir) if work_dir else config.APP_ROOT / "work" / video.stem)
+    stage = stage / "jianying_build"
+    if stage.exists():
+        shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True, exist_ok=True)
+
+    try:
+        folder = draft.DraftFolder(str(stage))
+        # allow_replace=False：**不覆盖**同名草稿（名字已由 _unique_name 保证唯一）
+        script = folder.create_draft(
+            draft_name, width=int(media.width or 1080),
+            height=int(media.height or 1920),
+            fps=int(round(media.fps or 30)), allow_replace=False)
+
+        # ── 视频主轨：引用源片 + 源内裁剪 ──────────────
+        vtrack = script.append_track(
+            draft.TrackSpec(draft.TrackType.video, name="SliceQ_主轨"))
+        material = draft.VideoMaterial(str(video))
+        cursor = 0.0
+        for h in highlights:
+            seg = draft.VideoSegment(
+                material,
+                target_timerange=trange(f"{cursor}s", f"{h.duration}s"),
+                source_timerange=trange(f"{h.start}s", f"{h.duration}s"))
+            script.add_segment(seg, vtrack)
+            cursor += h.duration
+        res.files.append(f"视频轨 {len(highlights)} 段")
+
+        # ── 字幕轨：用**重映射后**的 SRT ───────────────
+        #    这一步传错（拿源时间轴的 SRT）不会报错，只是字幕整体错位。
+        if timeline_srt and Path(timeline_srt).exists():
+            try:
+                script.import_srt(str(timeline_srt), track_name="SliceQ_字幕",
+                                  time_offset=0.0)
+                res.files.append("字幕轨已导入")
+            except Exception as exc:                        # noqa: BLE001
+                res.message += f"（字幕轨导入失败：{exc}）"
+
+        # ── 标题轨 ────────────────────────────────────
+        if make_titles and highlights:
+            ttrack = script.append_track(
+                draft.TrackSpec(draft.TrackType.text, name="SliceQ_标题"))
+            cursor = 0.0
+            for i, h in enumerate(highlights, 1):
+                title = draft.TextSegment(
+                    f"{i}. {h.title}",
+                    trange(f"{cursor}s", f"{min(4.0, h.duration)}s"),
+                    clip_settings=draft.ClipSettings(transform_y=-0.75))
+                script.add_segment(title, ttrack)
+                cursor += h.duration
+            res.files.append(f"标题轨 {len(highlights)} 条")
+
+        script.save()
+    except Exception as exc:                                # noqa: BLE001
+        res.error = f"生成剪映草稿失败：{type(exc).__name__}: {exc}"
+        return res
+
+    # ── 部署到剪映草稿目录 ────────────────────────────
+    built = stage / draft_name
+    if not built.exists():
+        res.error = f"草稿构建产物不存在：{built}"
+        return res
+    dest = root / draft_name
+    if dest.exists():                                       # 理论上不会，名字已避让
+        shutil.rmtree(dest, ignore_errors=True)
+    try:
+        shutil.copytree(built, dest)
+    except Exception as exc:                                # noqa: BLE001
+        res.error = f"写入剪映草稿目录失败：{exc}"
+        return res
+
+    # ── 补齐 meta 里默认为空的三个字段（实测坑）────────
+    meta_p = dest / "draft_meta_info.json"
+    if meta_p.exists():
+        try:
+            meta = json.loads(meta_p.read_text(encoding="utf-8"))
+            meta["draft_name"] = draft_name
+            meta["draft_fold_path"] = str(dest)
+            meta["draft_root_path"] = str(root)
+            meta_p.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception as exc:                            # noqa: BLE001
+            res.message += f"（draft_meta_info 字段补齐失败：{exc}）"
+
+    res.ok = True
+    res.out_dir = dest
+    res.message = (f"草稿「{draft_name}」已写入剪映草稿目录。"
+                   f"打开剪映首页即可看到。")
+    return res
+
+
+# ─────────────────────────────────────────────────────────────
+# 通道 2：达芬奇 OTIO
+# ─────────────────────────────────────────────────────────────
+def export_davinci(video: str | Path, highlights: Sequence[Highlight], *,
+                   out_dir: str | Path, media: MediaInfo,
+                   timeline_srt: Path | None = None,
+                   name: str = "",
+                   with_guide: bool = True) -> ChannelResult:
+    """生成 OTIO（甲方案）+ 并行 SRT + 导入说明.txt。"""
+    res = ChannelResult(name="达芬奇 OTIO")
+    try:
+        import opentimelineio as otio
+    except ImportError:
+        res.error = ("未安装 opentimelineio，无法生成 OTIO。\n"
+                     "→ 执行 `pip install opentimelineio` 后重试。")
+        return res
+
+    video = Path(video).resolve()
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    base = _safe_stem(name or video.stem)
+
+    rate = int(round(media.fps or 30)) or 30
+    # ⚠️ 素材真实总时长（不是 0、也不是片段时长）
+    total = media.duration if media.duration > 0 else max(
+        (h.end for h in highlights), default=0.0)
+
+    try:
+        timeline = otio.schema.Timeline(name=base)
+        # ★ 必须写 0 —— 否则达芬奇会把时间线起点当成 01:00:00:00
+        #   ⚠️ 2026-09-27 实测补充：该字段**只在 OTIO 的 rate 与达芬奇项目帧率一致时才生效**。
+        #      项目帧率不一致时达芬奇回退到项目自己的起始时间码（默认 01:00:00:00）。
+        #      ⇒ 仍然要写，但**不能只靠它**，`导入说明.txt` 里的手动设置步骤是必需的。
+        timeline.global_start_time = otio.opentime.RationalTime(0, rate)
+
+        track_v = otio.schema.Track(name="SliceQ_主轨",
+                                    kind=otio.schema.TrackKind.Video)
+        # ★★ 音频轨：**必须有**（2026-09-27 真机验收发现的缺陷）
+        #   只写视频轨时，达芬奇会建一条**空的**音频轨 —— 时间线上有画面、没声音。
+        #   实测证据：项目库 `Sm2TiTrack` 有 2 行（视频轨 + 音频轨），
+        #   但 `Sm2TiItem` 的 3 个片段全部挂在视频轨上，音频轨 0 个片段。
+        #   达芬奇**不会**从 OTIO 的视频片段里自动推断出音频。
+        track_a = otio.schema.Track(name="SliceQ_主音轨",
+                                    kind=otio.schema.TrackKind.Audio)
+
+        src_url = "file:///" + str(video).replace("\\", "/")
+        cursor = otio.opentime.RationalTime(0, rate)
+        for i, h in enumerate(highlights, 1):
+            # ⚠️ 变量名不要叫 `dur` —— 外层有同名 float，会被静默覆盖成
+            #    RationalTime，第二次迭代就抛"类型不支持"（看不出是覆盖）
+            seg_dur = otio.opentime.RationalTime(h.duration * rate, rate)
+            # 视频/音频两条轨各建**独立**的 Clip 与 ExternalReference：
+            # 同一个 Clip 对象 append 到两条轨会互相覆盖 `range_in_parent`，
+            # 表现为其中一条轨的片段位置错乱（且不报错）。
+            for tr in (track_v, track_a):
+                ref = otio.schema.ExternalReference(
+                    target_url=src_url,
+                    # ★ 必须显式设，且是**素材真实总时长**
+                    available_range=otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(0, rate),
+                        duration=otio.opentime.RationalTime(total * rate, rate)))
+                clip = otio.schema.Clip(
+                    name=f"{i}_{h.title}",
+                    media_reference=ref,
+                    source_range=otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(h.start * rate, rate),
+                        duration=seg_dur))
+                clip.range_in_parent = otio.opentime.TimeRange(
+                    start_time=cursor, duration=seg_dur)
+                tr.append(clip)
+            cursor = cursor + seg_dur
+
+        timeline.tracks.append(track_v)
+        timeline.tracks.append(track_a)
+        otio_path = out / f"{base}.otio"
+        otio.adapters.write_to_file(timeline, str(otio_path))
+    except Exception as exc:                                # noqa: BLE001
+        res.error = f"生成 OTIO 失败：{type(exc).__name__}: {exc}"
+        return res
+
+    res.files.append(otio_path.name)
+
+    # 字幕并行交付（OTIO 不承载字幕）
+    if timeline_srt and Path(timeline_srt).exists():
+        try:
+            dst = out / f"{base}.srt"
+            shutil.copy2(timeline_srt, dst)
+            res.files.append(dst.name)
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    if with_guide:
+        try:
+            guide = _write_guide(out / "导入说明.txt", video=video,
+                                 base=base, highlights=highlights,
+                                 draft_dir=None,
+                                 jianying_name="",
+                                 fps=media.fps)
+            res.files.append(guide.name)
+        except Exception as exc:                            # noqa: BLE001
+            res.message += f"（导入说明生成失败：{exc}）"
+
+    res.ok = True
+    res.out_dir = out
+    res.message = f"{base}.otio（{len(highlights)} 段，时间线 {cursor.to_seconds():.1f}s）"
+    return res
+
+
+def _safe_stem(name: str) -> str:
+    s = re.sub(r'[\\/:*?"<>|]+', "_", (name or "").strip())
+    return s.strip(". ") or "SliceQ时间线"
+
+
+def _write_guide(path: Path, *, video: Path, base: str,
+                 highlights: Sequence[Highlight],
+                 draft_dir: Path | None,
+                 jianying_name: str,
+                 fps: float = 0.0) -> Path:
+    """写 `导入说明.txt`。
+
+    ⚠️ 这一步**不能省**：`.otio` 只记录切点、不携带视频本身，
+       达芬奇首次导入**必然**弹「找不到片段」。不告诉用户该点什么，
+       他会以为文件坏了。
+
+    ⚠️ 2026-09-27 真机验收补入两条**用户实测踩到**的说明：
+       ① 时间线起始时间码 / 项目帧率的关系（R20）
+       ② SRT 必须"按时间码插入"，直接拖会让字幕整体提前约 0.5s
+    """
+    fps_txt = f"{fps:g}" if fps else "（与素材一致）"
+    lines = [
+        "SliceQ 导出说明",
+        "=" * 60,
+        "",
+        f"【达芬奇】导入 {base}.otio",
+        "  1. 菜单 File > Import > Timeline...，选这个 .otio 文件",
+        "  2. **首次导入会弹「找不到片段」或提示媒体离线，这是正常现象** ——",
+        "     .otio 只记录切点，不携带视频本身。",
+        "     弹窗问是否定位媒体时选【是】，然后选择下面这个文件夹：",
+        f"         {video.parent}",
+        "  3. 导入后时间线上应能看到**画面和声音**。",
+        "     ⚠️ 不要移动或重命名源视频，否则链接会断。",
+        "",
+        "【⚠️ 时间线起始时间码（影响字幕对位，请务必看）】",
+        f"  本素材帧率 = {fps_txt} fps。达芬奇的**新建项目默认时间线帧率是 24fps**、",
+        "  起始时间码默认是 01:00:00:00，两者都可能与本素材不一致。",
+        "",
+        "  · **推荐做法**：新建项目时，把项目/时间线帧率设为与素材相同",
+        f"    （{fps_txt} fps）。帧率一致时，本文件里写的起始时间码 0 才会生效，",
+        "    时间线从 00:00:00:00 开始，字幕可直接对位。",
+        "  · **兜底做法**：若项目已导入、起点显示为 01:00:00:00，",
+        "    去「项目设置 → 主设置 → 时间线起始时间码」改成 00:00:00:00。",
+        "",
+        "  ⚠️ 帧率不一致**不影响**片段本身的位置和时长（达芬奇会自动换算），",
+        "     只影响时间线的起始时间码。但字幕按时间码走，所以必须处理这一条。",
+        "",
+    ]
+    if jianying_name:
+        lines += [
+            f"【剪映】草稿「{jianying_name}」已写入剪映的草稿目录：",
+            f"     {draft_dir}",
+            "  打开剪映 → 首页「本地草稿」里应出现它。",
+            "  字幕、标题都在草稿里；**成片需要在剪映里手动导出**"
+            "（SliceQ 不代劳）。",
+            "",
+        ]
+    lines += [
+        f"【素材】源视频：{video}",
+        "  ⚠️ 同名冲突提醒：达芬奇按**文件名**匹配媒体池里的已有条目。",
+        "     若你的媒体池里已经有同名文件，可能挂错。必要时先清空媒体池。",
+        "",
+        "【字幕】导入并行导出的 " + base + ".srt",
+        "  ✅ **正确做法**：菜单 File > Import > Subtitle... 选中这个 .srt，",
+        "     再在字幕轨上右键 → **Insert Selected Subtitles to Timeline"
+        " Using Timecode**（按时间码插入）。",
+        "  ❌ **不要直接把 .srt 拖到时间线上** —— 实测（2026-09-27）：",
+        "     拖拽/顺序插入会让达芬奇从时间线第 0 帧开始排列，",
+        "     **丢掉第一条字幕的起始偏移**，导致全部字幕整体提前约 0.5 秒。",
+        "     32 条字幕全部偏移 13 帧（0.54s）不变 —— 不报错，但字幕比画面早。",
+        "",
+        "【⚠️ 关于字幕样式】",
+        "  导出通道**不会带上**你在 SliceQ 里设的字幕样式"
+        "（字体 / 颜色 / 描边 / 双语排版）：",
+        "    · 剪映  用剪映自己的默认字幕样式",
+        "    · 达芬奇 用并行导出的 .srt，样式在达芬奇里自行设置",
+        "  想统一外观的话，请在目标软件里调整一次字幕样式。",
+        "",
+        "【时间线对照】",
+    ]
+    acc = 0.0
+    for i, h in enumerate(highlights, 1):
+        lines.append(f"  片段{i}  「{h.title}」"
+                     f"  时间线 {acc:.0f}~{acc + h.duration:.0f}s"
+                     f"  ←  源 {h.start:.0f}~{h.end:.0f}s")
+        acc += h.duration
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+# ─────────────────────────────────────────────────────────────
+# 通道 3：降级包
+# ─────────────────────────────────────────────────────────────
+def export_fallback(video: str | Path, clips: Sequence[dict], *,
+                    out_dir: str | Path, task_id: int = 0,
+                    task_name: str = "任务",
+                    segments: Iterable | None = None,
+                    preset=None, transport=None, use_llm_split: bool = True,
+                    mode: str = "exact", burn_subtitles: bool = False,
+                    bilingual: bool = False, target_lang: str = "en",
+                    width: int = 0, height: int = 0,
+                    progress: ProgressCb | None = None,
+                    should_cancel: CancelCb | None = None) -> ChannelResult:
+    """降级包 = 阶段 3 的成片导出（每条候选一个 mp4 + SRT）+ 导入说明。
+
+    复用 `editor.export_clips` —— 不另写一套切片逻辑。
+    """
+    from . import editor                                     # 局部导入避免环
+
+    res = ChannelResult(name="降级包（片段 + 字幕）")
+    out = Path(out_dir)
+    try:
+        r = editor.export_clips(
+            video, clips, out_base=out, task_id=task_id,
+            task_name=task_name, mode=mode,
+            burn_subtitles=burn_subtitles, segments=segments,
+            preset=preset, transport=transport, use_llm_split=use_llm_split,
+            bilingual=bilingual, target_lang=target_lang,
+            width=width, height=height,
+            progress=progress, should_cancel=should_cancel)
+    except Exception as exc:                                # noqa: BLE001
+        res.error = f"导出片段失败：{exc}"
+        return res
+
+    if not r.ok_count:
+        res.error = "没有成功导出任何片段。"
+        res.out_dir = r.out_dir
+        return res
+
+    res.ok = True
+    res.out_dir = r.out_dir
+    res.files = [Path(i.video).name for i in r.items if i.ok]
+    res.message = f"{r.ok_count} 个片段（含 SRT 字幕文件）"
+    return res
+
+
+# ─────────────────────────────────────────────────────────────
+# 主入口
+# ─────────────────────────────────────────────────────────────
+def export_drafts(video: str | Path, clips: Sequence[dict], *,
+                  task_id: int = 0, task_name: str = "任务",
+                  out_base: str | Path | None = None,
+                  want_jianying: bool = True,
+                  want_davinci: bool = True,
+                  segments: Iterable | None = None,
+                  preset: subtitle_style.SubtitlePreset | None = None,
+                  transport=None, use_llm_split: bool = True,
+                  bilingual: bool = False, target_lang: str = "en",
+                  fallback_mode: str = "exact",
+                  burn_subtitles: bool = False,
+                  width: int = 0, height: int = 0,
+                  draft_root: str | Path | None = None,
+                  progress: ProgressCb | None = None,
+                  should_cancel: CancelCb | None = None) -> DraftResult:
+    """导出草稿（剪映 + 达芬奇），失败自动退回降级包。
+
+    `progress(done, total, 描述)`：total 固定为 100 的分段计数。
+    """
+    video = Path(video).resolve()
+    result = DraftResult()
+
+    def report(pct: int, msg: str) -> None:
+        if progress:
+            progress(max(0, min(100, int(pct))), 100, msg)
+
+    try:
+        report(2, "探测素材")
+        media = probe_media(video)
+        if not media.ok:
+            raise ExporterError(
+                "读不出素材的尺寸，无法生成草稿。\n"
+                "→ 确认视频文件完好，或先到「设置 → 环境」检查 ffprobe。")
+
+        highlights = plan_highlights(clips, media_duration=media.duration)
+        result.highlights = highlights
+        skipped = len([c for c in (clips or [])]) - len(highlights)
+        if not highlights:
+            raise ExporterError("没有可导出的片段（候选列表为空，或时间范围无效）。")
+        if skipped > 0:
+            result.notes.append(
+                f"有 {skipped} 条候选的时间范围无效或超出素材时长，已跳过。")
+
+        stamp = _timestamp()
+        base = f"{_safe_stem(task_name)}_{stamp}"
+        out = Path(out_base) if out_base else (config.EXPORT_DIR / base)
+        out.mkdir(parents=True, exist_ok=True)
+        result.out_dir = out
+
+        # ── 字幕：断句 + **跨段重映射** ────────────────
+        report(10, "整理字幕（跨段时间轴重映射）")
+        srt_path: Path | None = None
+        if segments:
+            info = build_timeline_subtitles(
+                segments, highlights, out_path=out / f"{base}.srt",
+                transport=transport, use_llm=use_llm_split,
+                bilingual=bilingual,
+                progress=lambda p, m: report(10 + int(p * 20), m))
+            result.cue_count = info["cue_count"]
+            result.dropped_cues = info["dropped"]
+            if info["srt"]:
+                srt_path = Path(info["srt"])
+                if not result.cue_count:
+                    # 不报错但必须说 —— 否则用户以为"字幕导出了"
+                    result.notes.append(
+                        "字幕为空：候选时段内没有可用的转录文本"
+                        "（可能是段边界把字幕都裁掉了）。")
+
+        # ── 通道 2：达芬奇 ─────────────────────────────
+        davinci_dir = out / "达芬奇"
+        if want_davinci and not (should_cancel and should_cancel()):
+            report(35, "生成达芬奇时间线（OTIO）")
+            cr = export_davinci(video, highlights, out_dir=davinci_dir,
+                                media=media, timeline_srt=srt_path,
+                                name=base)
+            result.channels["davinci"] = cr
+            if not cr.ok:
+                result.notes.append(f"达芬奇通道失败：{cr.error.splitlines()[0]}")
+
+        # ── 通道 1：剪映 ───────────────────────────────
+        jy_name = ""
+        if want_jianying and not (should_cancel and should_cancel()):
+            report(50, "生成剪映草稿")
+            ready, why = jianying_ready()
+            if not ready:
+                result.channels["jianying"] = ChannelResult(
+                    name="剪映草稿", ok=False, error=why)
+                result.notes.append("剪映通道不可用，已改为导出降级包。")
+            else:
+                ver, verified = detect_jianying_version()
+                cr = export_jianying(
+                    video, highlights, media=media, timeline_srt=srt_path,
+                    draft_root=draft_root, name=base,
+                    work_dir=(out / "_build"))
+                result.channels["jianying"] = cr
+                if cr.ok:
+                    jy_name = cr.out_dir.name if cr.out_dir else base
+                    if ver and not verified:
+                        result.notes.append(
+                            f"⚠️ 本机剪映版本 {ver} 未在已验证列表内"
+                            f"（已验证：{'、'.join(config.JIANYING_VERIFIED_VERSIONS)}）。"
+                            f"草稿格式兼容性未经验证，若打不开请反馈。")
+                else:
+                    result.notes.append(
+                        f"剪映通道失败：{cr.error.splitlines()[0]}")
+
+        # ── 降级包（剪映失败或不可用时）────────────────
+        need_fallback = want_jianying and not (
+            result.channels.get("jianying", ChannelResult()).ok)
+        if need_fallback:
+            report(65, "剪映通道不可用，导出降级包")
+            fb = export_fallback(
+                video, clips, out_dir=out / "降级包", task_id=task_id,
+                task_name=task_name, segments=segments, preset=preset,
+                transport=transport, use_llm_split=use_llm_split,
+                mode=fallback_mode, burn_subtitles=burn_subtitles,
+                bilingual=bilingual, target_lang=target_lang,
+                width=width, height=height,
+                progress=lambda d, t, m: report(65 + int(d * 25), m),
+                should_cancel=should_cancel)
+            result.channels["fallback"] = fb
+            if fb.ok:
+                result.notes.append(
+                    "已生成降级包：每条候选一个 mp4 + SRT，可直接拖进任意剪辑软件。")
+
+        # ── 达芬奇的导入说明（拿不到剪映名字时也要有）──
+        if srt_path and not (davinci_dir / "导入说明.txt").exists():
+            try:
+                _write_guide(davinci_dir / "导入说明.txt", video=video,
+                             base=base, highlights=highlights,
+                             draft_dir=(result.channels.get("jianying").out_dir
+                                        if result.channels.get("jianying")
+                                        and result.channels["jianying"].ok
+                                        else None),
+                             jianying_name=jy_name,
+                             fps=media.fps)
+            except Exception:                               # noqa: BLE001
+                pass
+
+        # ── 收尾提示 ───────────────────────────────────
+        result.notes.append(
+            "字幕样式不会跟随导出：剪映用它的默认样式，达芬奇用并行的 .srt 文件。")
+        if want_jianying or want_davinci:
+            result.notes.append(
+                "导出后需要手动完成最后一步：剪映里渲染成片；"
+                "达芬奇里导入 .otio 并按「导入说明.txt」定位素材。")
+
+        result.ok = bool(result.ok_channels())
+        report(100, "完成")
+        return result
+
+    except ExporterError as exc:
+        result.error = str(exc)
+        return result
+    except Exception as exc:                                # noqa: BLE001
+        result.error = f"导出草稿失败：{type(exc).__name__}: {exc}"
+        return result
+
+
+def _timestamp() -> str:
+    import time
+    return time.strftime("%Y%m%d_%H%M")
+
+
+def format_result(result: DraftResult) -> str:
+    """给 UI 用的多行汇总。"""
+    lines: list[str] = []
+    if result.error:
+        lines.append(f"[失败] {result.error}")
+        return "\n".join(lines)
+    lines.append(f"时间线：{len(result.highlights)} 段，"
+                 f"字幕 {result.cue_count} 条"
+                 + (f"（边界丢弃 {result.dropped_cues} 条）"
+                    if result.dropped_cues else ""))
+    for key, label in (("jianying", "剪映草稿"),
+                       ("davinci", "达芬奇 OTIO"),
+                       ("fallback", "降级包")):
+        cr = result.channels.get(key)
+        if not cr:
+            continue
+        if cr.ok:
+            lines.append(f"[成功] {label}：{cr.message}")
+            for f in cr.files[:6]:
+                lines.append(f"        {f}")
+        else:
+            lines.append(f"[失败] {label}：{cr.error.splitlines()[0] if cr.error else '未知'}")
+    for n in result.notes:
+        lines.append(f"提示：{n}")
+    if result.out_dir:
+        lines.append(f"输出目录：{result.out_dir}")
+    return "\n".join(lines)

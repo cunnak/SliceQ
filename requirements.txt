@@ -1,0 +1,37 @@
+# SliceQ 运行依赖
+# Python >= 3.11（开发用 3.13）
+
+# ── GUI ────────────────────────────────────────────────
+# ⚠️ 用 **PySide6-Essentials**，不要写 `PySide6`。
+#    `PySide6` 是元包 = Essentials + Addons（含 QtWebEngine/Qt3D/QtCharts…），
+#    磁盘约 1.2GB；本项目只用 QtCore / QtGui / QtWidgets，Essentials（约 458MB）足够。
+#    实测：写 PySide6 会让打包产物无谓变大（本机实测 Essentials 版 exe = 60MB）。
+PySide6-Essentials>=6.6
+
+# ── 网络 ───────────────────────────────────────────────
+requests>=2.31
+
+# ── 视频下载 ───────────────────────────────────────────
+yt-dlp>=2024.1.1
+
+# ── 草稿导出（阶段 5）─────────────────────────────────
+# 达芬奇通道用主包内置适配器即可，不需要 otio-fcp-adapter
+opentimelineio>=0.17
+# 剪映草稿生成。
+# ⚠️ 之前漏了这一条 —— 只装 requirements 的话剪映通道会直接失败
+#    （`jianying_ready()` 会给出"未安装 pyJianYingDraft"的明确提示）。
+pyJianYingDraft>=0.3
+
+# ── 封面选帧打分（阶段 4）───────────────────────────────
+# 用途：抽若干帧后挑"画面信息量最高"的那一帧当封面底图。
+# 只在封面功能里用到，缺失时功能降级（退化为取固定位置的一帧），不会崩。
+Pillow>=10.0
+
+# ── 解压 gyan.dev 的 .7z 版 ffmpeg ─────────────────────
+# 必需：主下载源是 gyan.dev 的 .7z（唯一确认含 whisper 滤镜的构建）
+# 实测：BtbN 的 .zip 名字像 full build，但**不含 whisper**，只能当兜底
+py7zr>=0.21
+
+# 注：ffmpeg 与 whisper 模型**不在依赖里**。
+#     它们是运行时下载到 %APPDATA%/SliceQ/ 的独立程序/数据，
+#     不打包进 exe（FFmpeg 为 GPL 构建，见 docs/TECH-DESIGN.md §5.1）

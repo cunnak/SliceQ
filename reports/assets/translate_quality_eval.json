@@ -1,0 +1,827 @@
+{
+  "samples": 53,
+  "buckets": {
+    "短句≤8": 10,
+    "中句9-20": 10,
+    "长句>20": 10,
+    "含数字": 10,
+    "含英文": 10,
+    "数字+英文": 3
+  },
+  "metrics": {
+    "total": 53,
+    "over_length": 15,
+    "untranslated": 2,
+    "rt_mean": 0.479,
+    "rt_min": 0.0,
+    "rt_low": 15
+  },
+  "scores": [
+    {
+      "n": 1,
+      "src": "dubious",
+      "score": 85,
+      "note": "原文有错字，译文意译通顺"
+    },
+    {
+      "n": 2,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 3,
+      "src": "broken",
+      "score": 40,
+      "note": "原文乱码，译文强行解释"
+    },
+    {
+      "n": 4,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 5,
+      "src": "broken",
+      "score": 60,
+      "note": "原文语无伦次，译文猜测意图"
+    },
+    {
+      "n": 6,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 7,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 8,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 9,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 10,
+      "src": "clear",
+      "score": 85,
+      "note": "语气词翻译略显生硬"
+    },
+    {
+      "n": 11,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 12,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 13,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 14,
+      "src": "dubious",
+      "score": 80,
+      "note": "数字孤立，语境缺失但可猜"
+    },
+    {
+      "n": 15,
+      "src": "dubious",
+      "score": 85,
+      "note": "口语断句不清，译文补全逻辑"
+    },
+    {
+      "n": 16,
+      "src": "dubious",
+      "score": 90,
+      "note": "量词错误，译文修正为复数"
+    },
+    {
+      "n": 17,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 18,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 19,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 20,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 21,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 22,
+      "src": "dubious",
+      "score": 85,
+      "note": "NBM疑为笔误，译文直译"
+    },
+    {
+      "n": 23,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 24,
+      "src": "dubious",
+      "score": 80,
+      "note": "TODP疑似口误/缩写不明"
+    },
+    {
+      "n": 25,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 26,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 27,
+      "src": "broken",
+      "score": 60,
+      "note": "原文语序混乱，译文强行对应"
+    },
+    {
+      "n": 28,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 29,
+      "src": "dubious",
+      "score": 75,
+      "note": "Mark Peter指代不清，译文略硬"
+    },
+    {
+      "n": 30,
+      "src": "broken",
+      "score": 40,
+      "note": "原文乱码，译文无意义猜测"
+    },
+    {
+      "n": 31,
+      "src": "broken",
+      "score": 30,
+      "note": "混合俄语，译文漏译且不通"
+    },
+    {
+      "n": 32,
+      "src": "dubious",
+      "score": 70,
+      "note": "口语重复断句，译文保留碎片感"
+    },
+    {
+      "n": 33,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 34,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 35,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 36,
+      "src": "dubious",
+      "score": 65,
+      "note": "“最佳性”非标准词，译文意译"
+    },
+    {
+      "n": 37,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 38,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 39,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 40,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 41,
+      "src": "clear",
+      "score": 95,
+      "note": ""
+    },
+    {
+      "n": 42,
+      "src": "dubious",
+      "score": 85,
+      "note": "原文截断，译文合理"
+    },
+    {
+      "n": 43,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 44,
+      "src": "clear",
+      "score": 92,
+      "note": ""
+    },
+    {
+      "n": 45,
+      "src": "clear",
+      "score": 93,
+      "note": ""
+    },
+    {
+      "n": 46,
+      "src": "dubious",
+      "score": 75,
+      "note": "凶项疑为口误/错字"
+    },
+    {
+      "n": 47,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 48,
+      "src": "broken",
+      "score": 60,
+      "note": "原文语序混乱难解"
+    },
+    {
+      "n": 49,
+      "src": "clear",
+      "score": 88,
+      "note": ""
+    },
+    {
+      "n": 50,
+      "src": "dubious",
+      "score": 85,
+      "note": "掉逼疑为傻逼之误"
+    },
+    {
+      "n": 51,
+      "src": "clear",
+      "score": 90,
+      "note": ""
+    },
+    {
+      "n": 52,
+      "src": "dubious",
+      "score": 80,
+      "note": "句子未说完"
+    },
+    {
+      "n": 53,
+      "src": "dubious",
+      "score": 75,
+      "note": "句子未说完"
+    }
+  ],
+  "avg_clear": 91.3,
+  "avg_notclear": 70.2,
+  "src_dist": {
+    "clear": 33,
+    "dubious": 14,
+    "broken": 6
+  },
+  "issues": [],
+  "cost_cny": 0.014290999999999998,
+  "pairs": [
+    {
+      "bucket": "中句9-20",
+      "zh": "你就是老落最爱是我,在床路崎岖中流浪。",
+      "en": "You're the one Lao Luo loves most, wandering through life's rugged paths.",
+      "back": "老罗最疼的就是你，在这坎坷的人世间漂泊。",
+      "rt_sim": 0.171,
+      "src": "dubious",
+      "score": 85
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "不知道怎么活下来的。",
+      "en": "I don't know how we survived.",
+      "back": "真不知道我们是怎么熬过来的。",
+      "rt_sim": 0.636,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "姚姚,山河艺尾好。",
+      "en": "Yaoyao, the mountains and rivers are beautiful at the end.",
+      "back": "瑶瑶，你看这山河多美啊。",
+      "rt_sim": 0.235,
+      "src": "broken",
+      "score": 40
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "他们不需要承担任何责任的。",
+      "en": "They don't need to take any responsibility.",
+      "back": "他们根本不用负什么责任。",
+      "rt_sim": 0.435,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "我唱上歌,我可我啥了。",
+      "en": "I sang a song, and then... what happened?",
+      "back": "我唱了首歌，然后……怎么回事？",
+      "rt_sim": 0.3,
+      "src": "broken",
+      "score": 60
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "你以为我不知道啊?",
+      "en": "Do you think I don't know?",
+      "back": "你以为我不知道吗？",
+      "rt_sim": 0.875,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "店里面都给他准备好了, 弄好了。",
+      "en": "Everything is ready for him in the shop; it's all set up.",
+      "back": "店里东西都给他备齐了，全弄好了。",
+      "rt_sim": 0.741,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "装模作样的, 假模假样的。",
+      "en": "Just putting on an act, being so fake.",
+      "back": "纯粹是演戏，假得要死。",
+      "rt_sim": 0.105,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "然后我发现他们打游戏, 你知道 吗?",
+      "en": "Then I caught them playing games, can you believe it?",
+      "back": "结果撞见他们在打游戏，你敢信？",
+      "rt_sim": 0.444,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "中句9-20",
+      "zh": "怕我把他们给搞得他妈的, 卧槽,",
+      "en": "Scared I'd mess them up—damn, holy shit!",
+      "back": "怕我把他们搞砸——操，真要命！",
+      "rt_sim": 0.5,
+      "src": "clear",
+      "score": 85
+    },
+    {
+      "bucket": "含数字",
+      "zh": "预算4K,能不能装工作坊。",
+      "en": "With a 4K budget, can we even fit a workshop setup?",
+      "back": "预算才四千块，哪塞得下整套工作室设备？",
+      "rt_sim": 0.286,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "装7台电脑,10台电脑。",
+      "en": "Setting up seven or ten computers.",
+      "back": "要装个七八台电脑呢。",
+      "rt_sim": 0.421,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "还有7台就在我这里装。",
+      "en": "The other seven will be installed here with me.",
+      "back": "另外七台就在我这儿装了。",
+      "rt_sim": 0.571,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "4。",
+      "en": "Four.",
+      "back": "四台。",
+      "rt_sim": 0.0,
+      "src": "dubious",
+      "score": 80
+    },
+    {
+      "bucket": "含数字",
+      "zh": "因为它有一个核显780M,这样我就不用什么?",
+      "en": "Because it has integrated graphics—the 780M—so I won't need what else?",
+      "back": "因为它有核显——780M那个——所以我就不需要别的啥了吧？",
+      "rt_sim": 0.591,
+      "src": "dubious",
+      "score": 85
+    },
+    {
+      "bucket": "含数字",
+      "zh": "这 位3个女生。",
+      "en": "These three girls.",
+      "back": "这三个姑娘。",
+      "rt_sim": 0.364,
+      "src": "dubious",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "她妈600块钱显卡我舍不得买。",
+      "en": "Damn, I couldn't even afford a 600-yuan graphics card.",
+      "back": "妈的，连六百块的显卡我都买不起。",
+      "rt_sim": 0.429,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "叫我付20块钱。",
+      "en": "Made me pay just twenty yuan.",
+      "back": "害我只掏了二十块钱。",
+      "rt_sim": 0.375,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "我1800块钱一个月啊。",
+      "en": "My monthly income is only eighteen hundred.",
+      "back": "我一个月工资才一千八。",
+      "rt_sim": 0.381,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含数字",
+      "zh": "540块钱, 吃一个月, 吃饭。",
+      "en": "Five hundred forty yuan—that’s my food budget for the whole month.",
+      "back": "五百四十块——那是我一个月的伙食费。",
+      "rt_sim": 0.308,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含英文",
+      "zh": "PSL什么水平?",
+      "en": "What tier is PSL?",
+      "back": "PSL是什么档次？",
+      "rt_sim": 0.667,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "含英文",
+      "zh": "不是,我把这个NBM也插到另外一台电脑上,",
+      "en": "No, I plugged this NBM into another computer as well,",
+      "back": "不，我把这块NBM插到另一台电脑上也试过，",
+      "rt_sim": 0.789,
+      "src": "dubious",
+      "score": 85
+    },
+    {
+      "bucket": "含英文",
+      "zh": "它这个都是ES CPU,然后有这个 恶性bug啊。",
+      "en": "They're all ES CPUs, and they have nasty bugs.",
+      "back": "它们都是ES版CPU，Bug多得很。",
+      "rt_sim": 0.541,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含英文",
+      "zh": "我想用这个ES版的这个TODP,",
+      "en": "I wanted to use the ES version of TODP,",
+      "back": "我本来想用TODP的ES版，",
+      "rt_sim": 0.5,
+      "src": "dubious",
+      "score": 80
+    },
+    {
+      "bucket": "含英文",
+      "zh": "MODT啊。",
+      "en": "MODT.",
+      "back": "MODT。",
+      "rt_sim": 0.889,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "含英文",
+      "zh": "MODT啊。",
+      "en": "MODT.",
+      "back": "MODT。",
+      "rt_sim": 0.889,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "含英文",
+      "zh": "on什么Desk。",
+      "en": "On what Desk?",
+      "back": "哪个Desk上？",
+      "rt_sim": 0.533,
+      "src": "broken",
+      "score": 60
+    },
+    {
+      "bucket": "含英文",
+      "zh": "MODT坏了。",
+      "en": "The MODT broke.",
+      "back": "MODT坏了。",
+      "rt_sim": 1.0,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "含英文",
+      "zh": "小孩上了幼儿园,我是不是就应该去去Mark Peter去卖",
+      "en": "My kid started kindergarten; should I go sell my Mark Peter now?",
+      "back": "我家娃开始上幼儿园了，我现在该把Mark Peter卖了吗？",
+      "rt_sim": 0.593,
+      "src": "dubious",
+      "score": 75
+    },
+    {
+      "bucket": "含英文",
+      "zh": "他 Engine回经键了!",
+      "en": "His engine key returned!",
+      "back": "他的引擎钥匙回来了！",
+      "rt_sim": 0.3,
+      "src": "broken",
+      "score": 40
+    },
+    {
+      "bucket": "数字+英文",
+      "zh": "150 вос ROES,保持人。",
+      "en": "150 ROES, keep it steady.",
+      "back": "150 ROES，稳住别动。",
+      "rt_sim": 0.583,
+      "src": "broken",
+      "score": 30
+    },
+    {
+      "bucket": "数字+英文",
+      "zh": "雙 卡2080Ti搞到现在 core 雙卡2080Ti搞到",
+      "en": "Dual 2080 Ti cards... dual 2080 Ti cards ended up with",
+      "back": "双2080 Ti显卡……结果双2080 Ti最后变成了",
+      "rt_sim": 0.531,
+      "src": "dubious",
+      "score": 70
+    },
+    {
+      "bucket": "数字+英文",
+      "zh": "一个什么PS5。",
+      "en": "some kind of PS5.",
+      "back": "某种PS5。",
+      "rt_sim": 0.5,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "我心里很痛。",
+      "en": "It hurts me inside.",
+      "back": "我心里难受啊。",
+      "rt_sim": 0.545,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "不知道。",
+      "en": "Don't know.",
+      "back": "不知道。",
+      "rt_sim": 1.0,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "最佳性的。",
+      "en": "Optimal performance.",
+      "back": "性能拉满。",
+      "rt_sim": 0.25,
+      "src": "dubious",
+      "score": 65
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "听不懂人话吗?",
+      "en": "Can't you understand human speech?",
+      "back": "听不懂人话吗？",
+      "rt_sim": 1.0,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "扭曲的。",
+      "en": "Twisted.",
+      "back": "拧巴了。",
+      "rt_sim": 0.0,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "操了。",
+      "en": "Fuck.",
+      "back": "操。",
+      "rt_sim": 0.667,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "都干不了了。",
+      "en": "Nothing works anymore.",
+      "back": "全都不灵光了。",
+      "rt_sim": 0.545,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "我操。",
+      "en": "Fuck.",
+      "back": "操。",
+      "rt_sim": 0.667,
+      "src": "clear",
+      "score": 95
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "你不要以为,",
+      "en": "Don't think that...",
+      "back": "别以为……",
+      "rt_sim": 0.5,
+      "src": "dubious",
+      "score": 85
+    },
+    {
+      "bucket": "短句≤8",
+      "zh": "我在这里装电脑。",
+      "en": "I'm here setting up computers.",
+      "back": "我在这通宵装机，",
+      "rt_sim": 0.571,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "整夜的时间,想分辨在你我之间,到底谁会爱谁多一点。",
+      "en": "All night long, trying to figure out who loves the other more between us.",
+      "back": "是为了搞清楚咱俩谁更爱对方。",
+      "rt_sim": 0.114,
+      "src": "clear",
+      "score": 92
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "明明是最重要的事情,最前沿的,最战略重大意义的事情要我去做。",
+      "en": "The most important tasks—the cutting-edge ones with major strategic significance—are assigned to me.",
+      "back": "那些最核心、最具战略意义的尖端任务都交给我。",
+      "rt_sim": 0.34,
+      "src": "clear",
+      "score": 93
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "你给他们凶项一点,他妈的他就还要去他妈的调子里面举报你呢?",
+      "en": "If you act a bit tough with them, they'll fucking go report you in their little group chats.",
+      "back": "你要是稍微强硬点，他们转头就在小群里告状。",
+      "rt_sim": 0.217,
+      "src": "dubious",
+      "score": 75
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "还有一群挂逼,在这边待那么久,志愿服务从来没干过啊。",
+      "en": "And then there's this bunch of freeloaders hanging around for ages without ever doing any volunteer work.",
+      "back": "还有那帮白嫖党，赖在那儿半天也不干点志愿活。",
+      "rt_sim": 0.279,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "仿佛仿佛额外的做一些什么,不做一些什么让度优先性,",
+      "en": "As if they're going above and beyond, or sacrificing priority by not doing something...",
+      "back": "搞得好像没做某事就是什么牺牲或者越级似的……",
+      "rt_sim": 0.14,
+      "src": "broken",
+      "score": 60
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "没电脑呢, 就过来打申请, 给他们配电脑啊。",
+      "en": "No computer? Just come submit an application, and we'll assign one to you.",
+      "back": "没电脑？去提交个申请，我们给你配一台就是了。",
+      "rt_sim": 0.389,
+      "src": "clear",
+      "score": 88
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "我这个想来想去想来想去, 觉得这帮掉逼不是很靠得住的样子。",
+      "en": "After thinking it over and over, I don't trust these assholes much.",
+      "back": "想来想去，我就是信不过这帮傻逼。",
+      "rt_sim": 0.35,
+      "src": "dubious",
+      "score": 85
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "我说, 我 操, 我强行, 我给你配电脑放他妈的二楼,",
+      "en": "I said, \"Fuck it,\" so I insisted on putting your computer setup on the damn second floor.",
+      "back": "我一咬牙说“算了”，硬是把你的电脑装在了该死的二楼。",
+      "rt_sim": 0.39,
+      "src": "clear",
+      "score": 90
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "我在的地方, 就 仿佛就是说, 这帮逼就觉得,",
+      "en": "Wherever I am, it seems like these jerks just assume...",
+      "back": "不管我在哪，这帮混蛋总觉得……",
+      "rt_sim": 0.414,
+      "src": "dubious",
+      "score": 80
+    },
+    {
+      "bucket": "长句>20",
+      "zh": "我现在有一个详实的, 项目计划说明什么东西的,",
+      "en": "That I have some detailed project plan or explanation ready.",
+      "back": "我手里有什么详细的项目计划或说明文档。",
+      "rt_sim": 0.526,
+      "src": "dubious",
+      "score": 75
+    }
+  ]
+}

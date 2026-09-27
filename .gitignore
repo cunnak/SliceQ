@@ -1,0 +1,50 @@
+# ── 打包产物 ────────────────────────────────────────────────
+build/
+dist/
+*.manifest
+
+# ── 测试素材与草稿产物 ──────────────────────────────────────
+# ⚠️ 这两个目录共 382 MB，且 test_media 里是从第三方直播录播切出的片段。
+#    体积 + 版权双重原因，绝不入库。
+stage0/test_media/
+stage0/test_drafts/
+
+# ── 含个人数据 / 他人数据的文件 ─────────────────────────────
+# ⚠️ root_meta_info.backup.json 是剪映草稿索引的备份，
+#    里面存着**用户全部草稿的名字与绝对路径**（实测确认）。
+stage0/root_meta_info.backup.json
+*.backup.json
+*.bak
+
+# ── 媒体与产物（体积 + 第三方内容风险）──────────────────────
+*.mp4
+*.mkv
+*.flv
+*.mov
+*.wav
+*.m4a
+*.mp3
+*.srt
+*.ass
+*.jsonl
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── 用户数据（程序运行时写在 %APPDATA%，不该出现在仓库）────
+credentials.bin
+*.db
+*.db-shm
+*.db-wal
+settings.json
+
+# ── 编辑器 / 系统 ──────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
