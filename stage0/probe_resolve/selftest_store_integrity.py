@@ -141,6 +141,10 @@ def main() -> int:
     store.add_export(tid, "clip_mp4", "a.mp4")
     store.add_subtitle(tid, 0, 1000, "字幕")
     store.add_marker(tid, 500, "标记")
+    # run_hint（schema v6 新增）—— 这张表是**动态查出来的**，
+    # 所以加表时忘了在这里造数据，本测试会立刻报"某张子表没有数据"。
+    # 这正是它该有的行为：漏一张表就漏一份数据（见文件头注释）。
+    store.replace_run_hints(tid, ["提示甲", "提示乙"])
 
     counts_before: dict[str, int] = {}
     conn = raw()

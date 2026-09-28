@@ -24,20 +24,23 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QProgressBar, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QAbstractItemView, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+    QHeaderView, QLabel, QPlainTextEdit, QProgressBar, QPushButton,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ... import analyzer, config, ffmpeg_tools, pipeline, store
 from ..workers import guard_ui
 from .copy_dialog import CopyDialog
+
+log = logging.getLogger(__name__)
 
 # ⚠️ 这里**不该**有"阶段 → 任务状态"的映射（v1.17 删掉了）。
 #    状态落库在 `pipeline.run()` 里做 —— 状态是任务的属性，由执行者维护。
@@ -143,7 +146,27 @@ class ClipsPage(QWidget):
         pl.addWidget(self.bar)
         self.progress_lbl = QLabel("")
         self.progress_lbl.setStyleSheet("color:#888780;font-size:12px;")
-        pl.addWidget(self.progress_lbl)
+        prow = QHBoxLayout()
+        prow.setContentsMargins(0, 0, 0, 0)
+        prow.setSpacing(10)
+        prow.addWidget(self.progress_lbl)
+        # ★ 「⚠️ N 条提示」必须**能点开看内容**（2026-09-28 修）。
+        #   原先它只是拼在进度文字后面的一串字符：用户看得到数量、
+        #   看不到内容 —— 而"完成：0 个切片段"的原因恰恰全在里面
+        #   （那次是"分析副本过大：base64 约 120.8M 字符，超过上限 20M"）。
+        #   看得到个数、看不到原因，等于没说。
+        self.hint_btn = QPushButton("")
+        self.hint_btn.setCursor(Qt.PointingHandCursor)
+        self.hint_btn.setFlat(True)
+        self.hint_btn.setStyleSheet(
+            "QPushButton{border:none;background:transparent;padding:0;"
+            "color:#B26B00;font-size:12px;text-decoration:underline;}"
+            "QPushButton:hover{color:#8A5200;}")
+        self.hint_btn.clicked.connect(self._show_hints)
+        self.hint_btn.setVisible(False)
+        prow.addWidget(self.hint_btn)
+        prow.addStretch(1)
+        pl.addLayout(prow)
         self.progress_box.setVisible(False)
         lay.addWidget(self.progress_box)
 
@@ -282,8 +305,16 @@ class ClipsPage(QWidget):
         self.reanalyze_btn.setEnabled(True)
         # 状态（出错 / 已取消）由 pipeline 落库，不在这里写 ——
         # 那边能区分"用户取消"与"真出错"，这里只能看到字符串
+        #
+        # ⚠️ 这里原先用 `print(detail)` —— 打包是 `--windowed`（无控制台），
+        #    `sys.stdout` 是 None，等于**把错误写进空气**。
+        #    同类问题本项目已经犯过第二次（第一次是 workers.guard_ui 的
+        #    `traceback.print_exc()`）。凡是"出错时才走"的打印，
+        #    都必须在发布版里可落盘。
+        log.error("分析失败：%s\n%s", msg, detail)
+        # 失败原因在 pipeline 里已落库（含"分析中断：..."那条），读回来展示
+        self._load_hints()
         self._tip(f"分析失败：{msg}")
-        print(detail)
 
     # ─────────────────────────────────────────────────────
     @guard_ui
@@ -372,6 +403,10 @@ class ClipsPage(QWidget):
             self.table.setItem(r, 5, QTableWidgetItem(c.get("summary") or ""))
             self.table.setItem(r, 6, QTableWidgetItem(c.get("title_hint") or ""))
         self.table.blockSignals(False)
+
+        # 提示始终从**库**里读（不是从内存里的 RunResult）——
+        # 这样重开程序、切换任务回来，仍然能看到上一次为什么失败。
+        self._load_hints()
 
         n_sel = sum(1 for c in clips if c.get("selected"))
         if clips:
@@ -462,9 +497,60 @@ class ClipsPage(QWidget):
         self.footer.setText("　".join(parts))
 
         if r.degraded:
-            # 降级事件必须让用户看到 —— 静默降级等于隐瞒
-            self.progress_lbl.setText(
-                self.progress_lbl.text() + f"　⚠️ {len(r.degraded)} 条提示")
+            # 降级事件必须让用户看到 —— 静默降级等于隐瞒。
+            # 但**不能只给个数**：这里改走可点开的按钮（见 `_load_hints`）。
+            self._load_hints()
+
+    # ─────────────────────────────────────────────────────
+    def _load_hints(self) -> None:
+        """从库里读本次运行的提示，决定按钮的可见性与文字。
+
+        为什么要落库 + 从库读（而不是用内存里的 `RunResult.degraded`）：
+          ① 用户常常**过一阵子**才回来看"上次为什么没出片段"；
+          ② 报错贴给支持者时，需要它还在；
+          ③ 进程一退，内存里的东西就没了 —— 而"分析失败了"这个事实
+             恰恰是他最需要事后复盘的。
+        """
+        hints: list[str] = []
+        if self.task_id:
+            try:
+                hints = store.get_run_hints(int(self.task_id))
+            except Exception:                               # noqa: BLE001
+                hints = []
+        self._hints = hints
+        btn = getattr(self, "hint_btn", None)
+        if btn is None:
+            return
+        btn.setVisible(bool(hints))
+        if hints:
+            btn.setText(f"⚠️ {len(hints)} 条提示（点此查看）")
+
+    def _show_hints(self) -> None:
+        """弹窗展示提示全文 —— 可选中、可复制，便于贴给支持者。"""
+        hints = list(getattr(self, "_hints", []))
+        if not hints:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"本次分析的提示（{len(hints)} 条）")
+        dlg.resize(760, 440)
+        v = QVBoxLayout(dlg)
+
+        head = QLabel(
+            "下面是本次分析里**被降级或失败**的地方。\n"
+            "结果可能因此不完整。看到「精析失败」时，请按里面的原因处理后再重跑。")
+        head.setWordWrap(True)
+        v.addWidget(head)
+
+        body = QPlainTextEdit()
+        body.setReadOnly(True)
+        body.setPlainText("\n\n".join(
+            f"[{i}] {t}" for i, t in enumerate(hints, 1)))
+        v.addWidget(body, 1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok)
+        bb.accepted.connect(dlg.accept)
+        v.addWidget(bb)
+        dlg.exec()
 
     def _tip(self, text: str) -> None:
         self.subtitle.setText(text)

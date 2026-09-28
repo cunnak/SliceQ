@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -37,6 +38,8 @@ from . import (analyzer, asr, concurrency, config, ffmpeg_tools,
                prompts, screening, store)
 from .analyzer import Transport, Usage
 from .screening import Candidate
+
+log = logging.getLogger(__name__)
 
 
 class PipelineError(Exception):
@@ -110,19 +113,97 @@ CancelCb = Callable[[], bool]
 # ─────────────────────────────────────────────────────────────
 # 副本压制参数（按 transport 分档，TECH-DESIGN §2.2）
 # ─────────────────────────────────────────────────────────────
-def preset_for(transport: Transport) -> tuple[str, str]:
-    """返回 (scale 高度, 码率)。
+# ── 分析副本的体积自适应（2026-09-28 事故后新增）──────────────
+#
+# 起因：精析副本按**固定码率**切，从不检查体积。而通道 B（兼容模式 HTTP）
+# 必须把副本 base64 内联，上限 20M 字符（`analyzer.B64_SAFE_LIMIT`）。
+# 实测事故：两个候选的副本分别 90.6MB / 46.3MB，base64 120.8M / 61.7M 字符
+# —— 超限 6.3 倍 / 3.2 倍 ⇒ **两个候选都在发请求前被拒**，
+# 用户看到的是"完成：0 个切片段"，而原因只写在一句用户看不到的提示里。
+#
+# 所以：切副本前先**估算体积**，超了就自动降档（先降码率、再降分辨率），
+# 降到最低档还不行才缩短时长 —— 并且把降级事实如实带给用户。
+#
+# 档位按"高画质优先"排列：体积够用就不降，能不降就不降。
+_ANALYSIS_LADDER: tuple[tuple[str, int, int], ...] = (
+    # (缩放高度, 视频 kbps, 音频 kbps)
+    ("720", 1000, 96),
+    ("480", 500, 96),
+    ("360", 280, 64),
+    ("240", 150, 48),
+)
 
-    通道 A 可传 100MB 本地文件 ⇒ 放宽到 720p/1Mbps；
-    通道 B 要 base64 内联、上限约 15MB ⇒ 压到 480p/0.5Mbps。
+# 缩到比这更短就没有分析价值了（模型看不到完整的一句话）。
+MIN_ANALYSIS_SEC = 30.0
+
+# 体积估算留的余量：宁可多降一档，也不要贴着上限走。
+# （估算本身有误差：实际码率受画面复杂度影响，可能略高于设定值。）
+_SIZE_SAFETY = 0.9
+
+
+def est_mp4_bytes(duration_sec: float, v_kbps: int, a_kbps: int) -> int:
+    """按码率估算 mp4 体积（字节）。故意略微**高估** —— 见 `_SIZE_SAFETY`。"""
+    return int(duration_sec * (v_kbps + a_kbps) * 1000 / 8 * 1.03) + 4096
+
+
+def plan_analysis_clip(duration_sec: float, max_bytes: int,
+                       max_duration: float
+                       ) -> tuple[str, int, int, float, str]:
+    """挑一个能塞进 `max_bytes` 的编码档位。
+
+    返回 `(缩放高度, 视频kbps, 音频kbps, 实际时长, 说明)`。
+    「说明」为空表示无需降级；**非空必须转达给用户**（静默降级等于隐瞒）。
+
+    `max_bytes <= 0` 表示不做体积约束（通道 A 本地直传时用）。
+    `max_duration <= 0` 表示不做时长约束。
     """
-    if getattr(transport, "name", "") == "dashscope":
-        return "720", "1000k"
-    return "480", "500k"
+    dur = max(0.1, duration_sec)
+    notes: list[str] = []
+
+    if max_duration > 0 and dur > max_duration + 0.5:
+        notes.append(
+            f"候选段 {duration_sec:.0f} 秒超过单次分析上限 "
+            f"{max_duration:.0f} 秒，本次只分析了前 {max_duration:.0f} 秒")
+        dur = max_duration
+
+    if max_bytes <= 0:
+        h, v, a = _ANALYSIS_LADDER[0]
+        return h, v, a, dur, "；".join(notes)
+
+    for h, v, a in _ANALYSIS_LADDER:
+        if est_mp4_bytes(dur, v, a) <= max_bytes:
+            return h, v, a, dur, "；".join(notes)
+
+    # 最低档仍超 ⇒ 只能缩短时长（最后手段，必须告知）
+    h, v, a = _ANALYSIS_LADDER[-1]
+    per_sec = (v + a) * 1000 / 8 * 1.03
+    shrunk = max(MIN_ANALYSIS_SEC, max_bytes / per_sec)
+    if shrunk < dur:
+        notes.append(
+            f"副本已降到最低画质（{h}p/{v}kbps）仍超过体积上限，"
+            f"时长缩到 {shrunk:.0f} 秒")
+        dur = shrunk
+    return h, v, a, dur, "；".join(notes)
+
+
+def clip_size_cap(transport: Transport) -> int:
+    """该通道单次能送出去的最大**原始**体积（已含安全余量）。
+
+    返回 0 表示不限制（通道 A 走本地路径直传时用它表达"随便"）。
+    """
+    fn = getattr(transport, "max_video_bytes", None)
+    if not callable(fn):
+        return 0
+    try:
+        cap = int(fn())
+    except Exception:                                       # noqa: BLE001
+        return 0
+    return int(cap * _SIZE_SAFETY) if cap > 0 else 0
 
 
 def cut_clip(video: str | Path, out: str | Path, start: float, end: float,
              height: str = "720", bitrate: str = "1000k",
+             audio_bitrate: str = "96k",
              should_cancel: CancelCb | None = None) -> Path:
     """切一段低码率分析副本（精析用）。"""
     ff = ffmpeg_tools.find_ffmpeg()
@@ -136,7 +217,7 @@ def cut_clip(video: str | Path, out: str | Path, start: float, end: float,
            "-i", str(video),
            "-vf", f"scale=-2:{height}",
            "-c:v", "libx264", "-preset", "veryfast", "-b:v", bitrate,
-           "-c:a", "aac", "-b:a", "96k",
+           "-c:a", "aac", "-b:a", audio_bitrate,
            str(o)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
@@ -208,12 +289,49 @@ def refine_one(video: str | Path, cand: Candidate, profile: str,
     """
     clip_start = max(0.0, cand.start - opts.refine_pad_sec)
     clip_end = cand.end + opts.refine_pad_sec
-    height, bitrate = preset_for(transport)
 
     clip_path = work / "refine" / f"clip_{idx:04d}.mp4"
-    if not (clip_path.exists() and clip_path.stat().st_size > 1024):
-        cut_clip(video, clip_path, clip_start, clip_end,
-                 height=height, bitrate=bitrate, should_cancel=should_cancel)
+    plan_notes: list[str] = []
+
+    # ★ 副本要按**通道能送出的体积**来切，而不是按固定码率。
+    #   通道上限（`clip_size_cap`）：通道 B 约 13.5MB、通道 A 约 94MB。
+    cap = clip_size_cap(transport)
+    # 时长上限与 screening 的候选上限对齐（候选 + 两侧留白）。
+    max_dur = screening.MAX_CANDIDATE_SEC + 2 * opts.refine_pad_sec
+
+    need_cut = True
+    if clip_path.exists() and clip_path.stat().st_size > 1024:
+        # ⚠️⚠️ 已存在的副本**不能无条件复用**。
+        #   旧版本（≤v0.1.1）按固定码率切、从不看体积，产出的副本可能
+        #   远超通道上限（实测 90.6MB / 46.3MB）。若无脑复用，
+        #   **用户重跑多少次都还是同一个失败** —— 修复等于没修。
+        #   所以：超过上限的旧副本必须重切。
+        old = clip_path.stat().st_size
+        if cap > 0 and old > cap:
+            plan_notes.append(
+                f"已有副本 {old / 1048576:.1f}MB 超过通道上限，已重新压制")
+        else:
+            need_cut = False
+
+    if need_cut:
+        height, v_kbps, a_kbps, keep, note = plan_analysis_clip(
+            clip_end - clip_start, cap, max_dur)
+        if note:
+            plan_notes.append(note)
+        cut_clip(video, clip_path, clip_start, clip_start + keep,
+                 height=height, bitrate=f"{v_kbps}k",
+                 audio_bitrate=f"{a_kbps}k",
+                 should_cancel=should_cancel)
+        # 副本规格必须进日志：体积超限是本项目最容易踩、又最难看见的坑
+        # （它在发请求前就失败，网络层什么都看不到）。
+        try:
+            mb = clip_path.stat().st_size / 1048576
+        except OSError:
+            mb = 0.0
+        log.info("候选 %s 分析副本：%.1f 秒 @ %sp/%skbps → %.1fMB"
+                 "（通道上限 %.1fMB）%s",
+                 idx + 1, keep, height, v_kbps, mb, cap / 1048576,
+                 f"｜{note}" if note else "")
 
     cache = work / "refine" / f"clip_{idx:04d}.json"
     if cache.exists():
@@ -227,7 +345,10 @@ def refine_one(video: str | Path, cand: Candidate, profile: str,
             #
             # 代价：分两次续跑时，`spent_cny` 只反映本次运行的花费。
             # 界面若要显示"这条任务的累计花费"，应从 usage 日志累计，而不是这里。
-            return saved.get("result"), Usage(), []
+            #
+            # 但**本次**发生的副本重切仍要报（plan_notes）—— 那是这一轮
+            # 真实做过的事，与"上次调用了什么"无关。
+            return saved.get("result"), Usage(), plan_notes
         except Exception:
             pass
 
@@ -262,9 +383,9 @@ def refine_one(video: str | Path, cand: Candidate, profile: str,
                   "output_tokens": res.usage.output_tokens,
                   "cache_hit_tokens": res.usage.cache_hit_tokens,
                   "reasoning_tokens": res.usage.reasoning_tokens},
-        "degraded": res.degraded,
+        "degraded": plan_notes + list(res.degraded),
     }, ensure_ascii=False), encoding="utf-8")
-    return result, res.usage, list(res.degraded)
+    return result, res.usage, plan_notes + list(res.degraded)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -317,20 +438,41 @@ def run(task_id: int,
     取消（`Cancelled`）**不写 ERROR** —— 用户按了取消然后看到"出错"，
     会以为程序坏了。
     """
+    # ★ 提示必须落库（2026-09-28）。
+    #   原先 degraded 只活在内存里、界面只显示个数，用户点不开、
+    #   进程一退就没了 —— 那次"0 个切片段"就是这样：原因明明有
+    #   （"分析副本过大：base64 约 120.8M 字符，超过安全上限 20M"），
+    #   却谁也没看到，只能靠翻 work 目录反推。
+    #   用一个外部列表当 sink，_run_pipeline 往里追加，
+    #   这样**异常中断时也能拿到已有的提示**（那正是最需要提示的时刻）。
+    hint_sink: list[str] = []
     try:
-        return _run_pipeline(
+        result = _run_pipeline(
             task_id, video, opts, transport,
             on_progress=on_progress, on_confirm=on_confirm,
             should_cancel=should_cancel, work_dir=work_dir,
-            skip_transcribe=skip_transcribe)
+            skip_transcribe=skip_transcribe, _hint_sink=hint_sink)
+        _save_hints(task_id, hint_sink)
+        return result
     except Cancelled:
         # 用户主动取消 —— 标「已取消」而不是「出错」。
         # 混用会让用户以为自己把程序搞坏了。
         _mark(task_id, config.STATUS_CANCELLED)
+        _save_hints(task_id, hint_sink)
         raise
-    except BaseException:                      # noqa: BLE001
+    except BaseException as exc:               # noqa: BLE001
         _mark(task_id, config.STATUS_ERROR)
+        hint_sink.append(f"分析中断：{type(exc).__name__}: {str(exc)[:300]}")
+        _save_hints(task_id, hint_sink)
         raise
+
+
+def _save_hints(task_id: int, hints: list[str]) -> None:
+    """把提示落库。**绝不抛异常** —— 落库失败不该掩盖真正的错误。"""
+    try:
+        store.replace_run_hints(task_id, hints)
+    except Exception:                                       # noqa: BLE001
+        log.warning("提示落库失败（不影响分析本身）", exc_info=True)
 
 
 def _run_pipeline(task_id: int,
@@ -342,11 +484,16 @@ def _run_pipeline(task_id: int,
                   on_confirm: ConfirmCb | None = None,
                   should_cancel: CancelCb | None = None,
                   work_dir: str | Path | None = None,
-                  skip_transcribe: list[asr.Segment] | None = None) -> RunResult:
+                  skip_transcribe: list[asr.Segment] | None = None,
+                  _hint_sink: list[str] | None = None) -> RunResult:
     """流水线主体。
 
     ⚠️ **不要直接调用它** —— 用 `run()`。直接调会绕过异常时的
-       状态落库（任务会永远停在中间状态）。
+       状态落库与**提示落库**（任务会永远停在中间状态，提示也没了）。
+
+    `_hint_sink`：外部传入的提示收集器。传进来时，本函数产生的所有
+    降级提示都会同步到它 —— 这样即使中途抛异常，调用方（`run()`）
+    也能把已经产生的提示落库。不传则用本地列表。
     """
     video = Path(video)
     if not video.exists():
@@ -361,8 +508,10 @@ def _run_pipeline(task_id: int,
     work.mkdir(parents=True, exist_ok=True)
 
     usage_total = Usage()
-    degraded: list[str] = []
+    # 提示收集器：外部传了就用它（异常时调用方还能落库），否则本地建一个。
+    degraded: list[str] = _hint_sink if _hint_sink is not None else []
     _status_now = [""]                 # 已写库的状态（避免重复 UPDATE）
+    _logged_stage = [""]               # 已记过日志的阶段（避免刷屏）
 
     def report(stage: str, ratio: float, msg: str, candidates: int = 0) -> None:
         # 阶段变化时把状态写库 —— 见 `run()` 的 docstring（v1.17 修正）
@@ -370,6 +519,15 @@ def _run_pipeline(task_id: int,
         if st and st != _status_now[0]:
             _status_now[0] = st
             _mark(task_id, st)
+        # 阶段变化时也记一条日志。
+        # 为什么只记阶段变化而不记每次进度：进度回调一秒能来好几条，
+        # 全记会把日志冲成噪声 —— 而日志的用途恰恰是**事后翻查**
+        # （2026-09-28 那次"0 个切片段"，分析全程零日志，
+        #   只能靠翻 work 目录反推，代价是好几轮往返）。
+        if st and st != _logged_stage[0]:
+            _logged_stage[0] = st
+            log.info("阶段 %s：%s（已花 ¥%.4f）", st, msg,
+                     usage_total.cost_cny)
         if on_progress:
             on_progress(Progress(
                 stage=stage, ratio=max(0.0, min(1.0, ratio)), message=msg,
@@ -378,6 +536,10 @@ def _run_pipeline(task_id: int,
 
     # ── ① 花费上限（给用户最坏预期）────────────────
     estimates = analyzer.estimate_total_upper_bound(duration, opts.candidate_ratio)
+    log.info("流水线开始：任务 %s，素材 %s（%.1f 秒），"
+             "候选预算 %.0f%%，并发 %s",
+             task_id, video.name, duration, opts.candidate_ratio * 100,
+             opts.concurrency)
 
     # ── ② 转录（本地，免费）────────────────────────
     if skip_transcribe is not None:
@@ -477,6 +639,14 @@ def _run_pipeline(task_id: int,
 
     candidates = all_cands[:opts.max_candidates]
     cand_seconds = sum(c.duration for c in candidates)
+    # 候选规模是排查"精析为什么慢 / 为什么失败"的第一手信息。
+    # 特别是**最长候选** —— 副本体积与它成正比，而体积超限是最隐蔽的失败。
+    log.info("候选就绪：%s 段、共 %.0f 秒（合并裁剪前 %s 段）",
+             len(candidates), cand_seconds, len(all_cands))
+    if candidates:
+        _longest = max(candidates, key=lambda c: c.duration)
+        log.info("最长候选 %.1f 秒：%s", _longest.duration,
+                 (_longest.hint or "")[:40])
     if not candidates:
         # 空结果不算失败，但必须告诉用户下一步能做什么，
         # 否则他只会看到"0 个切片"然后以为软件坏了。
@@ -575,6 +745,11 @@ def _run_pipeline(task_id: int,
                       "confidence": c.confidence})
 
     def _fail_refine(i: int, c, exc: BaseException) -> None:
+        # ★ 失败原因必须进日志。这是事后唯一能查的证据链 ——
+        #   2026-09-28 那次"0 个切片段"，原因（副本体积超限）只写在
+        #   内存里的 degraded，日志里一个字都没有，只能靠翻 work 目录反推。
+        log.warning("候选 %s 精析失败（源内 %.1f~%.1f 秒）：%s: %s",
+                    i + 1, c.start, c.end, type(exc).__name__, exc)
         if isinstance(exc, analyzer.AnalyzerError):
             degraded.append(f"候选 {i + 1} 精析失败：{exc}")
         elif isinstance(exc, PipelineError):
@@ -588,6 +763,8 @@ def _run_pipeline(task_id: int,
     if _refine_workers > 1 and len(candidates) > 1:
         degraded.append(f"精析并发 {_refine_workers} 路"
                         f"（可在设置里调整；并发越高越容易撞限流）。")
+    log.info("开始精析 %s 个候选（%s 路并发，花费上限 ¥%.2f）",
+             len(candidates), _refine_workers, opts.hard_limit_cny)
 
     concurrency.run_tasks(
         candidates,
@@ -597,6 +774,8 @@ def _run_pipeline(task_id: int,
         on_result=lambda i, r: _finish_refine(i, candidates[i], r),
         on_error=lambda i, e: _fail_refine(i, candidates[i], e))
 
+    log.info("流水线结束：%s 个切片段，花费 ¥%.4f，提示 %s 条",
+             len(clips), usage_total.cost_cny, len(degraded))
     report("refine", 1.0, f"完成，{len(clips)} 个切片段", len(clips))
     _mark(task_id, config.STATUS_READY)
     return RunResult(

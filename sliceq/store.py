@@ -20,7 +20,7 @@ from . import config
 _local = threading.local()
 
 # 当前 schema 版本。加字段/加表时 +1，并在 _MIGRATIONS 里补一段。
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 # ─────────────────────────────────────────────────────────────
@@ -192,12 +192,37 @@ CREATE INDEX IF NOT EXISTS idx_tseg_task ON transcript_seg(task_id, idx);
 """
 
 
+# ── v6：降级提示落库 ────────────────────────────────────────
+#
+# 起因（2026-09-28）：精析失败的原因只写进内存里的 `RunResult.degraded`，
+# 界面上只显示一个数字（"⚠️ 2 条提示"），**点不开**。
+# 用户看到"完成：0 个切片段"，完全不知道发生了什么；
+# 事后诊断也只能靠翻 work 目录反推（那次两个候选都因副本体积超限失败）。
+#
+# 这是**可观测性缺陷**，不是显示问题：
+#   ① 用户无法自助（不知道是素材问题、设置问题还是软件问题）；
+#   ② 支持者无法取证（拿不到原始报错）；
+#   ③ 提示随进程退出永久消失，重开程序就"什么都没发生过"。
+# ⇒ 提示必须落库：跑完能看、重开还能看、截图/复制贴出来也能看。
+_SCHEMA_V6 = """
+CREATE TABLE IF NOT EXISTS run_hint (
+    hint_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    INTEGER NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+    run_at     TEXT    NOT NULL,
+    seq        INTEGER NOT NULL,
+    text       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_run_hint_task ON run_hint(task_id, seq);
+"""
+
+
 _MIGRATIONS: dict[int, str] = {
     1: _SCHEMA_V1,
     2: _SCHEMA_V2,
     3: _SCHEMA_V3,
     4: _SCHEMA_V4,
     5: _SCHEMA_V5,
+    6: _SCHEMA_V6,
 }
 
 
@@ -286,6 +311,36 @@ def delete_task(task_id: int) -> None:
     conn = _connect()
     conn.execute("DELETE FROM task WHERE id=?", (task_id,))
     conn.commit()
+
+
+# ─────────────────────────────────────────────────────────────
+# 运行提示（降级事件 / 失败原因）
+# ─────────────────────────────────────────────────────────────
+# 为什么要落库：这些提示原先只活在内存里，界面只显示个数、点不开，
+# 进程一退就没了。2026-09-28 那次"0 个切片段"正是这样 ——
+# 用户看不到原因，我们事后也拿不到证据，只能去翻 work 目录反推。
+def replace_run_hints(task_id: int, hints: Iterable[str]) -> None:
+    """用**本次运行**的提示整体替换该任务的记录。
+
+    ⚠️ 是替换、不是追加：用户重跑一次，上一轮的提示就该消失。
+       否则"上次失败的原因"会和"这次成功"并列显示，把用户引向错误结论。
+    """
+    conn = _connect()
+    conn.execute("DELETE FROM run_hint WHERE task_id=?", (task_id,))
+    items = [str(t) for t in hints if str(t).strip()]
+    if items:
+        now = _now()
+        conn.executemany(
+            "INSERT INTO run_hint (task_id, run_at, seq, text) VALUES (?,?,?,?)",
+            [(int(task_id), now, i, t) for i, t in enumerate(items, 1)])
+    conn.commit()
+
+
+def get_run_hints(task_id: int) -> list[str]:
+    """取某任务最近一次运行的提示（按写入顺序）。"""
+    return [str(r["text"]) for r in
+            _rows("SELECT text FROM run_hint WHERE task_id=? ORDER BY seq",
+                  (task_id,))]
 
 
 # ─────────────────────────────────────────────────────────────

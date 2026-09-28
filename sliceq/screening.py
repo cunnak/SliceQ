@@ -41,6 +41,22 @@ from .analyzer import AnalyzeResult, Transport, Usage
 ProgressCb = Callable[[float, str], None]
 CancelCb = Callable[[], bool]
 
+# ── 候选段长度约束（2026-09-28 事故后新增）─────────────────────
+#
+# 起因：粗筛给出 10 个首尾相接的候选，被 merge 无限合并成一个 20 分钟的
+# 巨块；精析要把它的低码率副本 base64 后交给模型，而通道上限是 20M 字符
+# ⇒ 副本 90.6MB / base64 120.8M 字符，超限 6.3 倍，**全部候选精析失败**。
+#
+# 所以：候选段必须有长度上限，且这个上限要与"能传出去的副本体积"对齐。
+#   · 180 秒 @ 360p/280kbps ≈ 7.7MB ⇒ base64 ≈ 10.3M 字符，安全。
+#   · 180 秒 @ 480p/500kbps ≈ 13.4MB ⇒ base64 ≈ 17.9M 字符，贴边但可过。
+# 取 180 秒是为了"留一档降级余量"：即使某段素材画面特别复杂、
+# 实际码率超预期，也还有降分辨率的空间，不会直接撞上限。
+MAX_CANDIDATE_SEC = 180.0
+
+# 切分时不要产生比这更短的碎片（把一句话切成两半没有意义）。
+MIN_CANDIDATE_SEC = 20.0
+
 
 class ScreeningError(Exception):
     """粗筛失败，message 直接给用户看。"""
@@ -223,30 +239,77 @@ def parse_candidates(text: str, window_start: float, window_end: float,
 # ─────────────────────────────────────────────────────────────
 # ④ 合并与硬阀
 # ─────────────────────────────────────────────────────────────
+def _split_long(c: Candidate, max_len: float,
+                min_len: float = MIN_CANDIDATE_SEC) -> list[Candidate]:
+    """把超长候选切成若干块（保持时间顺序，且**不留碎片**）。
+
+    ⚠️ 尾块允许比 `max_len` 长约 `min_len` —— 这不是偷懒，是为了避免碎片：
+       严格按 max_len 切，185 秒的候选会变成 180 + **5 秒**
+       （实测这份数据里就有 185s 的候选）。那个 5 秒的块会**白花一次
+       模型调用**，而且 5 秒什么都分析不出来。
+       做法：只有当**剩余**超过 `max_len + min_len` 时才单独开一块，
+       否则剩下的全部并进最后一块 ⇒ 每块落在
+       `[max_len, max_len + min_len]`，或（本来就不超长时）保持原样。
+    """
+    if max_len <= 0 or c.duration <= max_len + min_len:
+        return [replace(c)]
+    out: list[Candidate] = []
+    t = c.start
+    while c.end - t > max_len + min_len:
+        out.append(replace(c, start=t, end=min(t + max_len, c.end)))
+        t += max_len
+    out.append(replace(c, start=t, end=c.end))
+    return out
+
+
 def merge_candidates(cands: Iterable[Candidate],
-                     gap: float = 8.0) -> list[Candidate]:
+                     gap: float = 8.0,
+                     max_len: float = MAX_CANDIDATE_SEC) -> list[Candidate]:
     """合并重叠或邻近的候选段。
 
     gap=8s：中间隔不到 8 秒的两个候选，多半是同一件事被切成了两半。
     合并时保留更高的 confidence 与更长的 hint。
+
+    `max_len`：**单个候选段的时长上限**（默认 180 秒，见 `MAX_CANDIDATE_SEC`）。
+
+    ⚠️⚠️ 这个上限不是"好看不好看"，而是**精析能不能跑起来**的问题。
+       精析会把候选段的低码率副本编码成 base64 交给模型，而兼容模式通道
+       有 20M 字符的硬上限（实测撞墙值见 `analyzer.B64_HARD_LIMIT`）。
+       实测事故（2026-09-28）：粗筛给出 10 个**首尾相接**的候选
+       （600s~1800s，每个 80~185 秒），gap=8 让它们全部并成**一个
+       1200 秒（20 分钟）的巨块**。精析副本 90.6 MB、base64 120.8M 字符
+       —— 超限 6.3 倍。结果**两个候选全部在发请求前就被拒**，
+       用户看到的是"完成：0 个切片段"，而且失败原因只进内存里的
+       degraded 列表，界面上只显示一个数字（"⚠️ 2 条提示"），点不开。
+
+       ⇒ 合并**绝不能无限长**。超过 max_len 就切开。
+         切开后每段仍需 ≥ `MIN_CANDIDATE_SEC` 才有意义（否则把一句话切成两半）。
     """
     items = sorted((c for c in cands if c.duration > 0),
                    key=lambda c: (c.start, -c.confidence))
     if not items:
         return []
 
-    merged: list[Candidate] = [replace(items[0])]
+    merged: list[Candidate] = list(_split_long(items[0], max_len))
     for c in items[1:]:
         last = merged[-1]
-        if c.start <= last.end + gap:
-            last.end = max(last.end, c.end)
+        joined_end = max(last.end, c.end)
+        # 能并进上一段的条件：邻近 **且** 并完不超长。
+        # ⚠️ `max_len <= 0` 表示**不做长度限制**（与 `_split_long` 的语义一致）——
+        #    不能写成 `joined_end - last.start <= max_len`，那样 0 会变成
+        #    "任何合并都超限"，直接把合并功能整个关掉（语义相反，且不报错）。
+        can_join = (c.start <= last.end + gap
+                    and (max_len <= 0
+                         or (joined_end - last.start) <= max_len))
+        if can_join:
+            last.end = joined_end
             if c.confidence > last.confidence:
                 last.confidence = c.confidence
                 last.hint = c.hint or last.hint
             if c.source and c.source not in last.source:
                 last.source = "+".join(sorted(set(last.source.split("+")) | {c.source}))
         else:
-            merged.append(replace(c))
+            merged.extend(_split_long(c, max_len))
     return merged
 
 
