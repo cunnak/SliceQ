@@ -289,8 +289,9 @@ def t_otio() -> None:
        and "新时间线里没有字幕轨道" in guide, "")
     ck("★ 说明里有「用哪份 SRT」的对照表（两份文件名都出现）",
        "_达芬奇默认时间码.srt" in guide and "00:00:00:00（被你改成了0）" in guide, "")
-    ck("★ 说明里提醒「哨兵占位条不要删」",
-       "占位" in guide and "不要删" in guide, "")
+    ck("★ 说明里如实说明哨兵：会被达芬奇当零长度条目丢掉、删不删都行",
+       "空的占位条" in guide and "零长度条目丢掉" in guide
+       and "删不删都行" in guide, "")
     ck("说明里写了时间线起始时间码 / 帧率的关系（R20）",
        "起始时间码" in guide and "帧率" in guide, "")
     ck("说明里给出了 00:00:00:00 这个具体值", "00:00:00:00" in guide, "")

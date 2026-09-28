@@ -84,6 +84,39 @@
 
 ---
 
+## 发布产物
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `SliceQ.exe` | **60.2 MB**（63,166,168 字节） | PyInstaller onefile，**单文件、免安装**；不含 FFmpeg（首次使用时按需下载） |
+
+```
+SHA256  cc99a6e40c3a02377639f4075733d73786eb993caecdf6ec521fcc94fc1c98cb
+```
+
+校验方式（PowerShell）：
+
+```powershell
+Get-FileHash .\SliceQ.exe -Algorithm SHA256
+```
+
+> ⚠️ 首次运行 Windows 可能弹「**Windows 已保护你的电脑**」（SmartScreen）。
+> 因为这是未做代码签名的新发布者 —— 点「**更多信息**」→「**仍要运行**」。
+
+---
+
+## 本次发布的验证记录
+
+发布前做过的实测，全部有据可查（见 `reports/`）：
+
+- **真机验收**：剪映能打开生成的草稿（`suc:true` + 草稿被剪映重写）、
+  达芬奇媒体在线有画面（切点逐帧回算误差 < 1 帧）、字幕 32 条零偏移对位
+- **干净 Windows 虚拟机**：全新 Win11 25H2（1024×768）里启动、GUI 渲染、
+  数据目录与数据库、三个下载/API 端点可达，全部实测通过
+- **合规**：exe 的 271 个条目逐个检查，**不含任何 ffmpeg / ffprobe**
+
+---
+
 ## 反馈
 
 遇到问题请开 [Issue](https://github.com/cunnak/SliceQ/issues)，并附上：
