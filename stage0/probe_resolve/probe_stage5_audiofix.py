@@ -115,7 +115,7 @@ def main() -> int:
     print(f"\n[4] 导出到 {out}")
     clips = [{"start": h.start, "end": h.end, "title_hint": h.title}
              for h in hl]
-    r = E.export_drafts(VIDEO, clips, task_name="音频修复验证",
+    r = E.export_drafts(VIDEO, clips, task_name="字幕对位验证",
                         out_base=out,
                         want_jianying=False,      # ← 只出达芬奇，不碰剪映草稿目录
                         want_davinci=True,
@@ -165,9 +165,10 @@ def main() -> int:
     ck("导出了 导入说明.txt", guide.exists())
     if guide.exists():
         g = guide.read_text(encoding="utf-8")
-        ck("★ 说明里有「时间线起始时间码」小节（R20）", "时间线起始时间码" in g)
-        ck("★ 说明里警告不要直接拖 SRT", "不要直接把 .srt 拖到时间线" in g)
-        ck("★ 说明里给了「按时间码插入」", "Using Timecode" in g)
+        ck("★ 说明里有「起始时间码」小节（R20）", "起始时间码" in g)
+        ck("★ 说明里给了确切入口（右键时间线，不是项目设置）",
+           "右键你的时间线" in g)
+        ck("★ 说明里提醒哨兵占位条不要删", "占位" in g and "不要删" in g)
         ck("说明里写了本素材帧率", f"{media.fps:g}" in g)
 
     print("\n" + "=" * 78)

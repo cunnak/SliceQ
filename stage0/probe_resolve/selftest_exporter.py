@@ -278,14 +278,63 @@ def t_otio() -> None:
            f"{tv.name!r} / {ta.name!r}")
 
     # ── 导入说明新增的两条（2026-09-27 真机踩到）────────────
-    ck("★ 说明里警告「不要直接拖 SRT」（拖拽会丢首条偏移、字幕整体提前）",
-       "不要直接把 .srt 拖到时间线" in guide, "")
-    ck("★ 说明里给了「按时间码插入」的正确做法",
-       "Using Timecode" in guide, "")
-    ck("★ 说明里写了时间线起始时间码 / 项目帧率的关系（R20）",
-       "时间线起始时间码" in guide and "帧率" in guide, "")
-    ck("说明里给出了兜底做法（手动改起始时间码）",
-       "00:00:00:00" in guide, "")
+    ck("★ 说明里指出了「达芬奇两种导入方式结果相同」（实测结论）",
+       "无论用哪种方式" in guide, "")
+    ck("★ 说明里给了改起始时间码的确切入口（右键时间线，不是项目设置）",
+       "右键你的时间线" in guide and "时间线设置" in guide, "")
+    ck("★ 说明里提醒「哨兵占位条不要删」",
+       "占位" in guide and "不要删" in guide, "")
+    ck("说明里写了时间线起始时间码 / 帧率的关系（R20）",
+       "起始时间码" in guide and "帧率" in guide, "")
+    ck("说明里给出了 00:00:00:00 这个具体值", "00:00:00:00" in guide, "")
+
+    # ── ★★ 哨兵占位（2026-09-28）──────────────────────────────
+    # 背景：达芬奇**无论**用拖拽还是「使用时间码的时间线」，都会把 SRT 的
+    #       第一条对齐到时间线第 0 帧 ⇒ **丢掉首条自身的起始偏移**。
+    #       实测全表恒定偏 13 帧（0.543s）且不报错。
+    # 解法：在真首条**之前**插一条空的极短字幕占住第 0 帧。
+    # ★ 这个缺陷此前溜过了全部 83 项自测 —— 因为**没人测过"首条偏移"**。
+    #
+    # ⚠️ 注意本测试的输入 SRT 首条**本来就贴在 0 上**（测试 [5] 生成的），
+    #    所以产出**不应该**有哨兵（幂等）。真正验证"首条 > 0 会加哨兵"，
+    #    靠下面直接调用 write_davinci_srt 的那组断言。
+    srt_out = out / "结构测试.srt"
+    if srt_out.exists():
+        raw = srt_out.read_text(encoding="utf-8")
+        blocks = [b for b in re.split(r"\n\s*\n", raw.strip()) if b.strip()]
+        # ⚠️ 变量名不要叫 head —— 本文件有 head() 打印函数，会被遮蔽
+        _fb = blocks[0].split("\n") if blocks else []
+        ck("★ 源首条已是 0 ⇒ 产出**不**插哨兵（幂等、不污染剪映等其它软件）",
+           not (len(_fb) > 1 and "00:00:00,001" in _fb[1]),
+           _fb[1] if len(_fb) > 1 else "")
+        nums = [int(b.split("\n")[0]) for b in blocks
+                if b.split("\n")[0].strip().isdigit()]
+        ck("★ 全表序号连续（1..N）",
+           nums == list(range(1, len(blocks) + 1)), f"{nums[:6]} …共{len(nums)}")
+
+        # 直接测函数本身
+        _src = WORK / "sent_src.srt"
+        _src.write_text(
+            "1\n00:00:00,500 --> 00:00:01,500\n甲\n\n"
+            "2\n00:00:02,000 --> 00:00:03,000\n乙\n", encoding="utf-8")
+        _d1 = WORK / "sent_out1.srt"
+        added, _why = E.write_davinci_srt(_src, _d1)
+        _t1 = _d1.read_text(encoding="utf-8")
+        _b1 = [b for b in re.split(r"\n\s*\n", _t1.strip()) if b.strip()]
+        ck("★ 首条 0.5s > 0 ⇒ 插入哨兵", added is True, str(_why))
+        ck("★ 哨兵不冲掉原内容（甲、乙都在）", "甲" in _t1 and "乙" in _t1)
+        ck("★ 插入后共 3 条", len(_b1) == 3, str(len(_b1)))
+        ck("★ 真首条位置未被改写（仍是 00:00:00,500）",
+           "00:00:00,500" in _t1, "")
+
+        _src0 = WORK / "sent_src0.srt"
+        _src0.write_text("1\n00:00:00,000 --> 00:00:01,000\n丙\n",
+                         encoding="utf-8")
+        _d0 = WORK / "sent_out0.srt"
+        added0, _ = E.write_davinci_srt(_src0, _d0)
+        ck("首条已是 0 ⇒ 不插哨兵（幂等）", added0 is False, "")
+        ck("不插哨兵时内容原样复制",
+           "丙" in _d0.read_text(encoding="utf-8"), "")
 
 
 def t_jianying() -> None:
