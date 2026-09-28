@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 import time
@@ -36,6 +37,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from . import asr_models, config, ffmpeg_tools
+
+log = logging.getLogger(__name__)
 
 ProgressCb = Callable[[float, str], None]   # (0~1 的进度, 描述)
 CancelCb = Callable[[], bool]               # 返回 True 表示应中止
@@ -442,6 +445,45 @@ def _parse_jsonl(path: Path) -> list[Segment]:
     return segs
 
 
+def _chunk_fingerprint(model_path: Path, language: str, use_gpu: bool) -> str:
+    """转录缓存的**参数指纹** —— 决定一个已存在的分片结果还能不能复用。
+
+    ⚠️ 为什么必须有指纹：转录结果一旦被缓存复用，
+       **换了模型/档位就不会生效**（用户会以为"换了模型没变化"）。
+       这是"缓存没有内容指纹"的典型形状。
+       指纹里放三样够用的东西：模型文件身份、语言、是否 GPU。
+       模型身份用 (文件名, 大小, mtime) —— 换挡位必然换文件，
+       同名覆盖也会改变 size/mtime。
+    """
+    try:
+        st = model_path.stat()
+        ident = f"{model_path.name}:{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        ident = model_path.name
+    return f"{ident}|{language}|{int(bool(use_gpu))}"
+
+
+def _cached_chunk(dest: Path, fingerprint: str) -> list[Segment] | None:
+    """若该分片已有**参数一致**的转录结果，直接返回；否则 None。"""
+    if not (dest.exists() and dest.stat().st_size > 0):
+        return None
+    meta = dest.with_suffix(dest.suffix + ".meta")
+    if meta.exists():
+        try:
+            if meta.read_text(encoding="utf-8").strip() != fingerprint:
+                log.info("分片 %s 的识别参数已变化，重跑", dest.name)
+                return None
+        except OSError:
+            return None
+    else:
+        # 老缓存（v0.1.3 之前）没有指纹文件 ⇒ 按"可用"处理并补写。
+        # 风险：用户在生成它之后换过模型的话，会拿到旧结果。
+        # 但代价对比悬殊 —— 不复用意味着每次重跑整条素材的转录
+        # （84 分钟素材约 40 分钟），远大于这个低概率风险。
+        log.debug("分片缓存无指纹，按可用处理：%s", dest.name)
+    return _parse_jsonl(dest)
+
+
 def transcribe_chunk(wav: str | Path, dest: Path,
                      model: str | Path | None = None,
                      vad: str | Path | None = None,
@@ -466,6 +508,24 @@ def transcribe_chunk(wav: str | Path, dest: Path,
 
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # ★ 缓存复用（2026-09-28 新增）
+    #
+    # 原先这里无条件 `dest.unlink(missing_ok=True)` 然后重跑 whisper ——
+    # 意味着**转录结果从来没有被当作缓存**。而转录是全流程最慢的一步
+    # （84 分钟素材约 40 分钟），并且**与"换一版筛选结果"完全无关**：
+    # 用户只是想调一下筛选强度重看候选，也要重付这 40 分钟。
+    # 更糟的是 GUI 的「重新分析」会先 rmtree 整个 work 目录，连
+    # audio.wav / chunk_*.speech.wav 都一起没，代价还要更大。
+    #
+    # 缓存的正确性依赖两点，都已处理：
+    #   ① 识别参数变化 → `_chunk_fingerprint` 比对（模型/语言/GPU）
+    #   ② 输入音频变化 → 上游 `chunk_*.speech.wav` 自己也有存在性检查
+    fingerprint = _chunk_fingerprint(model_path, language, use_gpu)
+    reused = _cached_chunk(dest, fingerprint)
+    if reused is not None:
+        return reused
+
     dest.unlink(missing_ok=True)
 
     af = (
@@ -488,6 +548,12 @@ def transcribe_chunk(wav: str | Path, dest: Path,
         tail = (r.stderr or "").strip().splitlines()
         raise AsrError("转录失败：" + (tail[-1] if tail else "未知错误"))
 
+    # 记下指纹 —— 下次才知道这份结果是不是"当前这套参数"产生的
+    try:
+        dest.with_suffix(dest.suffix + ".meta").write_text(
+            fingerprint, encoding="utf-8")
+    except OSError:
+        pass
     return _parse_jsonl(dest)
 
 

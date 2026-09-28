@@ -485,7 +485,14 @@ def screen(video: str | Path,
     result.trimmed_seconds = trimmed
 
     if progress:
-        progress(1.0, f"粗筛完成，候选 {len(kept)} 段")
+        # ⚠️ 必须点明"本轮新增" —— 缓存命中的窗口不参与本函数内的合并，
+        #    所以 `len(kept)` 在"全部窗口都命中缓存"时会显示 **0**。
+        #    2026-09-28 实测就出现过这种自相矛盾的输出：
+        #    这里报"候选 0 段"，紧接着流水线上层报"找到 6 个候选段"
+        #    （缓存候选由 pipeline 补回）。**日志自己打自己脸比没有日志更坏。**
+        extra = (f"（{len(skipped)} 个窗口复用缓存，候选由上层补回）"
+                 if skipped else "")
+        progress(1.0, f"粗筛完成，本轮新增候选 {len(kept)} 段{extra}")
     return result
 
 

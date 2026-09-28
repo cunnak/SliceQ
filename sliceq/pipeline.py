@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -786,9 +787,40 @@ def _run_pipeline(task_id: int,
         trimmed_seconds=scr.trimmed_seconds, degraded=degraded, finished=True)
 
 
-def clear_cache(video: str | Path) -> None:
-    """清掉某个素材的全部中间产物（用于"重新分析"）。"""
-    import shutil
+# 「重新分析」只清这些 —— **不含转录**（理由见 clear_cache 的 docstring）
+_REANALYZE_CLEAR = ("screen.jsonl", "refine", "frames")
+
+
+def clear_cache(video: str | Path, *, keep_transcript: bool = True) -> None:
+    """清掉某个素材的中间产物（用于「重新分析」）。
+
+    `keep_transcript=True`（默认）**保留转录相关的一切**，只删
+    「粗筛 / 精析」的产物：`screen.jsonl`、`refine/`、`frames/`。
+
+    ★ 为什么默认保留转录（2026-09-28 修）：
+      「重新分析」的语义是"换一版**筛选结果**"，而转录是**本地免费但极慢**
+      的一步（84 分钟素材约 40 分钟），与筛选强度、需求描述**完全无关**。
+      原先这里无条件 `rmtree(work)` ⇒ 用户想调一下筛选强度重看候选，
+      要连 40 分钟转录一起重付，而界面上完全看不出来会这样。
+      （更隐蔽的是：`transcribe_chunk` 当时还会无条件删掉已有的
+        `chunk_*.speech.jsonl` ⇒ 转录结果**本来就不是缓存**。
+        两处都已修。）
+
+    `keep_transcript=False` 留给真正该重跑转录的场合：
+    换了识别模型想强制重塑，或怀疑转录结果本身有问题。
+    """
     work = config.APP_ROOT / "work" / Path(video).stem
-    if work.exists():
+    if not work.exists():
+        return
+    if not keep_transcript:
         shutil.rmtree(work, ignore_errors=True)
+        return
+    for name in _REANALYZE_CLEAR:
+        p = work / name
+        try:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            elif p.exists():
+                p.unlink()
+        except OSError:
+            log.warning("清理中间产物失败：%s", p, exc_info=True)
