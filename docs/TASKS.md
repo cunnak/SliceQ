@@ -867,6 +867,24 @@
       详见 `reports/STAGE6-PUBLISH-RESULT.md`
       ⏳ 仍未做：exe 图标（.ico）、README 截图、仓库 topics
 
+【★ v0.1.1 热修复（2026-09-28 晚，v0.1.0 发布后第一个真实缺陷）】
+
+- [x] **点「开始精析」卡在「准备中…」** —— 实为**三个独立缺陷**叠加
+      完整取证见 `reports/V0.1.1-HOTFIX-REPORT.md`
+      ① **子进程管道死锁**（真卡死）：`asr.py::_run_ffmpeg` 开管道却不读，
+         ffmpeg 写满 64KB 缓冲区后永久阻塞。实测那条命令 **0.8 秒能跑完、
+         却写 95,662 字节 stderr** ⇒ 必然死锁。
+         ⚠️ `editor.py::_run_ffmpeg` **早已修过同一个坑**，asr.py 漏了。
+      ② **进度回调漏接**：`clips_page` 调 `pool.run` 漏传 `with_progress=True`
+         ⇒ 静默地整条进度链断掉。全项目 7 处调用，**只有这一处漏了**。
+      ③ **中断残留状态变谎话**：被强杀后 `except` 来不及跑，状态永远停在
+         `transcribing`。新增 `store.reset_stale_inflight_statuses()`，
+         启动时按数据回退（**不动 `error`/`cancelled`**）。
+      回归自测：`selftest_pipe_deadlock`(10) + `selftest_pipeline_wiring`(14)，
+      且**用旧实现验证过回归测试真的能抓到**（旧实现挂死、新实现通过）。
+      已发 **v0.1.1**：`SliceQ.exe` 63,168,464 字节，
+      SHA256 `e2f7eead…4dde3`
+
 【发布前处理（已完成）】
 
 - 排除测试素材（382MB，含第三方录播）与含个人数据的索引备份 ⇒ 入库 384MB → **2.4MB**
