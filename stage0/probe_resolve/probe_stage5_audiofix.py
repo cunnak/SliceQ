@@ -166,10 +166,12 @@ def main() -> int:
     if guide.exists():
         g = guide.read_text(encoding="utf-8")
         ck("★ 说明里有「起始时间码」小节（R20）", "起始时间码" in g)
+        ck("★★ 说明里有「第 0 步：必须先加字幕轨道」",
+           "添加字幕轨道" in g and "Sub 1" in g)
         ck("★ 说明里给了确切入口（右键时间线 → 时间线设置）",
            "右键那条时间线" in g and "时间线设置" in g)
-        ck("★★ 说明里警告「每导入一次 OTIO 都会新建时间线、起点回到默认」",
-           "每导入一次" in g and "自动带过来" in g)
+        ck("★★ 说明里警告「每导入一次 OTIO：起点重置 + 没有字幕轨道」",
+           "每导入一次" in g and "新时间线里没有字幕轨道" in g)
         ck("★ 说明里有「用哪份 SRT」对照表", "_达芬奇默认时间码.srt" in g)
         ck("★ 说明里提醒哨兵占位条不要删", "占位" in g and "不要删" in g)
         ck("说明里写了本素材帧率", f"{media.fps:g}" in g)

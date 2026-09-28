@@ -278,12 +278,15 @@ def t_otio() -> None:
            f"{tv.name!r} / {ta.name!r}")
 
     # ── 导入说明的关键提醒（2026-09-27 / 09-28 真机踩到）──────────
-    ck("★ 说明里点明了「点了没反应 = 时间码基准不对」",
-       "点了没反应" in guide and "静默忽略" in guide, "")
+    ck("★★ 说明里有「第 0 步：必须先加字幕轨道」（否则静默失败）",
+       "添加字幕轨道" in guide and "Sub 1" in guide, "")
+    ck("★ 说明里点明了静默失败的两种原因",
+       "没反应" in guide and "静默忽略" in guide and "Item not found on the track" in guide, "")
     ck("★ 说明里给了改起始时间码的确切入口（右键时间线 → 时间线设置）",
        "右键那条时间线" in guide and "时间线设置" in guide, "")
-    ck("★★ 说明里警告「每导入一次 OTIO 都会新建时间线、起点回到默认」",
-       "每导入一次" in guide and "自动带过来" in guide, "")
+    ck("★★ 说明里警告「每导入一次 OTIO 会新建时间线：起点重置 + 没有字幕轨道」",
+       "每导入一次" in guide and "自动带过来" in guide
+       and "新时间线里没有字幕轨道" in guide, "")
     ck("★ 说明里有「用哪份 SRT」的对照表（两份文件名都出现）",
        "_达芬奇默认时间码.srt" in guide and "00:00:00:00（被你改成了0）" in guide, "")
     ck("★ 说明里提醒「哨兵占位条不要删」",
