@@ -507,15 +507,29 @@ def export_davinci(video: str | Path, highlights: Sequence[Highlight], *,
     # 字幕并行交付（OTIO 不承载字幕）
     # ★ 走 write_davinci_srt：必要时插一条「哨兵」占位条，
     #   否则达芬奇会把首条对齐到时间线第 0 帧、丢掉 0.543s 那种首条偏移。
+    #
+    # ★★ 2026-09-28 起**产出两份**，因为达芬奇的时间码基准是个"二选一"：
+    #    达芬奇**新建时间线**的起始时间码默认是 `01:00:00:00`
+    #    （实测：项目库 `Sm2Sequence.MediaExtents=[3600.0, 时长]`，三个新建时间线全都如此），
+    #    而我们的 SRT 是零基的。两者不一致时，整份 SRT 会落在时间线起点**之前**
+    #    ⇒ 达芬奇**静默忽略整个插入操作**（点了没反应、不报错）——
+    #    用户为此连试了五轮。让用户去改设置不如我们直接适配：
+    #      ① `xxx.srt`                    零基（标准件；起始时间码 = 0 的项目用）
+    #      ② `xxx_达芬奇默认时间码.srt`    整份 +1h（达芬奇默认项目**开箱即用**）
+    srt_note = ""
     if timeline_srt and Path(timeline_srt).exists():
         try:
-            dst = out / f"{base}.srt"
-            sentinel, why = write_davinci_srt(timeline_srt, dst)
-            res.files.append(dst.name)
-            if sentinel:
-                res.message += f"（{why}）"
+            dst0 = out / f"{base}.srt"
+            write_davinci_srt(timeline_srt, dst0, offset=0.0)
+            res.files.append(dst0.name)
+
+            dst1 = out / f"{base}_达芬奇默认时间码.srt"
+            write_davinci_srt(timeline_srt, dst1,
+                              offset=DAVINCI_DEFAULT_OFFSET)
+            res.files.append(dst1.name)
+            srt_note = "；字幕 SRT 两份（零基 + 达芬奇默认）"
         except Exception:                                   # noqa: BLE001
-            pass
+            srt_note = "；字幕 SRT 生成失败"
 
     if with_guide:
         try:
@@ -530,7 +544,8 @@ def export_davinci(video: str | Path, highlights: Sequence[Highlight], *,
 
     res.ok = True
     res.out_dir = out
-    res.message = f"{base}.otio（{len(highlights)} 段，时间线 {cursor.to_seconds():.1f}s）"
+    res.message = (f"{base}.otio（{len(highlights)} 段，"
+                   f"时间线 {cursor.to_seconds():.1f}s）{srt_note}")
     return res
 
 
@@ -566,24 +581,60 @@ def _safe_stem(name: str) -> str:
 #    「字幕时间轴映射只有一处调用点」（硬约束 #23）没有被破坏：
 #    这里是在**交付层**追加一条占位，**不重新做任何时间轴映射**。
 _SENTINEL_TEXT = " "        # 单个空格：SRT 要求每条至少有文本行，空串可能被判非法
-_SENTINEL_RANGE = "00:00:00,000 --> 00:00:00,001"
+
+# 达芬奇**新建时间线**的默认起始时间码 = 01:00:00:00（实测：项目库里
+# `Sm2Sequence.MediaExtents = [3600.0, 时长]`，三个新建时间线全都是 3600）。
+# 我们的 SRT 是零基的，直接导入会**整份落在时间线起点之前一小时** ⇒
+# 达芬奇静默忽略整个插入操作（点了没反应，也不报错）。
+DAVINCI_DEFAULT_OFFSET = 3600.0
+
+_TC_RANGE_RE = re.compile(
+    r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})")
 
 
-def _srt_blocks(text: str) -> list[list[str]]:
-    norm = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    return [b.split("\n") for b in re.split(r"\n\s*\n", norm) if b.strip()]
+def _fmt_tc(seconds: float) -> str:
+    """秒 → SRT 时间码 `HH:MM:SS,mmm`（自动进位，不为负）。"""
+    total = max(0.0, seconds)
+    h = int(total // 3600)
+    m = int(total % 3600 // 60)
+    s = int(total % 60)
+    ms = int(round((total - int(total)) * 1000))
+    if ms >= 1000:                       # 四舍五入可能顶到 1000
+        ms -= 1000
+        s += 1
+        if s >= 60:
+            s -= 60
+            m += 1
+        if m >= 60:
+            m -= 60
+            h += 1
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def _srt_first_start_sec(text: str) -> float | None:
-    m = re.search(r"(\d+):(\d+):(\d+)[,.．](\d+)\s*-->", text)
+def _shift_tc_line(line: str, offset: float) -> str:
+    """把一行里的 `开始 --> 结束` 时间码整体平移 offset 秒。"""
+    m = _TC_RANGE_RE.search(line)
     if not m:
-        return None
-    h, mi, s, ms = (int(x) for x in m.groups())
-    return h * 3600 + mi * 60 + s + ms / 1000
+        return line
+
+    def to_sec(tc: str) -> float:
+        h, mi, rest = tc.split(":")
+        ss, mss = rest.split(",")
+        return int(h) * 3600 + int(mi) * 60 + int(ss) + int(mss) / 1000.0
+
+    new = f"{_fmt_tc(to_sec(m.group(1)) + offset)} --> " \
+          f"{_fmt_tc(to_sec(m.group(2)) + offset)}"
+    return line[:m.start()] + new + line[m.end():]
 
 
-def write_davinci_srt(src: Path | str, dst: Path | str) -> tuple[bool, str]:
+def write_davinci_srt(src: Path | str, dst: Path | str,
+                      offset: float = 0.0) -> tuple[bool, str]:
     """把 SRT 交付给达芬奇；必要时在最前面插一条「哨兵」占位字幕。
+
+    `offset` —— 整份时间码平移的秒数。**必须与达芬奇该项目/时间线的
+        「起始时间码」一致**，否则整份落在范围外，达芬奇会静默忽略插入：
+          · 达芬奇**新建**时间线（默认）   → `offset=3600`（01:00:00:00）
+          · 用户已把起始时间码改成 0        → `offset=0`
 
     返回 `(是否插入哨兵, 说明文本)`，**永不抛异常**（失败时退化为原样复制）。
     """
@@ -603,24 +654,48 @@ def write_davinci_srt(src: Path | str, dst: Path | str) -> tuple[bool, str]:
         return False, "源 SRT 为空，原样复制"
 
     first = _srt_first_start_sec(text)
-    # 首条已经贴在 0 上（或解析不出）⇒ 不需要哨兵
-    if first is None or first <= 0.0005:
-        dst.write_text(text, encoding="utf-8", newline="")
-        return False, "首条已从 0 开始，无需哨兵"
+    need_sentinel = first is not None and first > 0.0005
 
-    out: list[list[str]] = [[
-        "1", _SENTINEL_RANGE, _SENTINEL_TEXT,
-    ]]
-    for i, blk in enumerate(blocks, start=2):
+    out: list[list[str]] = []
+    if need_sentinel:
+        # 哨兵占住「时间线第一帧」：达芬奇会把 SRT 的第一条对齐到时间线起点，
+        # 让哨兵去顶，真首条才能保住它自己的起始偏移。
+        out.append(["1", f"{_fmt_tc(offset)} --> {_fmt_tc(offset + 0.001)}",
+                    _SENTINEL_TEXT])
+
+    start_no = 2 if need_sentinel else 1
+    for i, blk in enumerate(blocks, start=start_no):
         body = list(blk)
         # block[0] 是序号行 —— 丢掉它并按顺序重排，免得源文件编号不连续
         if body and re.fullmatch(r"\s*\d+\s*", body[0]):
             body = body[1:]
+        if offset:
+            body = [_shift_tc_line(ln, offset) for ln in body]
         out.append([str(i), *body])
+
     # ⚠️ 块之间是**空行**（两个换行）—— SRT 靠空行分块，不能只用一个换行
     dst.write_text((nl + nl).join(nl.join(b) for b in out) + nl,
                    encoding="utf-8", newline="")
-    return True, f"已插入哨兵占位条（源首条 {first:.3f}s）"
+    if not need_sentinel and not offset:
+        return False, "首条已从 0 开始，无需哨兵"
+    why = (f"已插入哨兵占位条（源首条 {first:.3f}s）" if need_sentinel
+           else "无需哨兵")
+    if offset:
+        why += f"；时间码整体 +{offset:.0f}s"
+    return need_sentinel, why
+
+
+def _srt_blocks(text: str) -> list[list[str]]:
+    norm = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return [b.split("\n") for b in re.split(r"\n\s*\n", norm) if b.strip()]
+
+
+def _srt_first_start_sec(text: str) -> float | None:
+    m = re.search(r"(\d+):(\d+):(\d+)[,.．](\d+)\s*-->", text)
+    if not m:
+        return None
+    h, mi, s, ms = (int(x) for x in m.groups())
+    return h * 3600 + mi * 60 + s + ms / 1000
 
 
 def _write_guide(path: Path, *, video: Path, base: str,
@@ -643,7 +718,31 @@ def _write_guide(path: Path, *, video: Path, base: str,
         "SliceQ 导出说明",
         "=" * 60,
         "",
-        f"【达芬奇】导入 {base}.otio",
+        "★★★ 先读这一段：字幕插不插得进去，只看一件事 —— 时间码基准 ★★★",
+        "",
+        "达芬奇**新建时间线**的起始时间码默认是 01:00:00:00，",
+        "而 SRT 的时间码是**从 0 开始**的。两者对不上时，整份 SRT 会落在",
+        "时间线起点**之前**，达芬奇就会**静默忽略整个插入** ——",
+        "表现为「点了没反应，也不报错」。",
+        "",
+        "所以本目录给了**两份** SRT，按你的情况挑一份：",
+        "",
+        "   你的时间线起始时间码        用哪一份",
+        "   ────────────────────────  ─────────────────────────────────",
+        f"   01:00:00:00（达芬奇默认）   ▸ {base}_达芬奇默认时间码.srt",
+        f"   00:00:00:00（被你改成了0）  ▸ {base}.srt",
+        "",
+        "查起始时间码：在**媒体池**里**右键那条时间线** →「时间线设置」→「起始时间码」。",
+        "",
+        "⚠️⚠️ **每导入一次 .otio，达芬奇都会新建一条时间线，起始时间码会",
+        "     回到默认的 01:00:00:00。** 你上次改成 0 的那条**不会**自动带过来，",
+        "     换了新时间线必须重新确认一次。",
+        "",
+        "想一劳永逸：进「偏好设置」找**新建时间线**的默认起始时间码，改成",
+        "     00:00:00:00（设置项在不同版本里位置/叫法有出入，找不到就按上面照做）。",
+        "✅ 改起始时间码**只改时间码显示，不动画面内容**，可放心改。",
+        "",
+        "【达芬奇】导入 " + base + ".otio",
         "  1. 菜单 File > Import > Timeline...，选这个 .otio 文件",
         "  2. **首次导入会弹「找不到片段」或提示媒体离线，这是正常现象** ——",
         "     .otio 只记录切点，不携带视频本身。",
@@ -651,17 +750,6 @@ def _write_guide(path: Path, *, video: Path, base: str,
         f"         {video.parent}",
         "  3. 导入后时间线上应能看到**画面和声音**。",
         "     ⚠️ 不要移动或重命名源视频，否则链接会断。",
-        "",
-        "【★ 第 1 步：把时间线的起始时间码改成 00:00:00:00（必做）】",
-        "  达芬奇默认让时间线从 01:00:00:00 开始，而本字幕文件是**从 0 开始的零基时间码**。",
-        "  起点若为 01:00:00:00，字幕的时间码会落在**时间线范围之外** ——",
-        "  达芬奇会**静默忽略整个插入操作**（点了没反应，也不报错）。",
-        "",
-        "  改法：进「剪辑」页面 → 在**媒体池**里**右键你的时间线**",
-        "        →「时间线设置」→「起始时间码」→ 填 00:00:00:00 → 确定。",
-        "  ⚠️ 别找错地方：不是「项目设置」，也不是「偏好设置 → 新建时间线设置」——",
-        "     那两处要么只管以后新建的时间线，要么中文名不叫这个（实测找不到）。",
-        "  ✅ 改这个**只改时间码显示，不动画面内容**，可放心改。",
         "",
         f"  补充：本素材帧率 = {fps_txt} fps，而达芬奇新建项目默认 24fps。",
         "  帧率不一致**不影响**片段位置与时长（达芬奇会自动换算）。",
@@ -681,20 +769,16 @@ def _write_guide(path: Path, *, video: Path, base: str,
         "  ⚠️ 同名冲突提醒：达芬奇按**文件名**匹配媒体池里的已有条目。",
         "     若你的媒体池里已经有同名文件，可能挂错。必要时先清空媒体池。",
         "",
-        "【字幕】导入并行导出的 " + base + ".srt",
-        "  ⚠️ 2026-09-28 实测更新（此前写的「不要拖拽、要用按时间码插入」**不准确**）：",
-        "     达芬奇**无论用哪种方式**导入外部 SRT，行为都一样 ——",
-        "     把 SRT 的**第一条对齐到时间线第 0 帧**，其余按相对间隔排列，",
-        "     ⇒ **首条自身的起始偏移被丢掉**（实测全表恒定偏 13 帧 / 0.54s，且不报错）。",
+        "【字幕】导入字幕（★ 两份 SRT，用本文件最上面那张表里对应的那一份）",
+        "  导入方式：File > Import > Subtitle... 选 .srt，",
+        "     再在**媒体池**里**右键那个字幕条目** →",
+        "     「将所选字幕插入到… > 使用时间码的时间线」。",
+        "     ⚠️ 点完**没反应**，基本就是时间码基准不对 —— 回到本文件最上面那段。",
         "",
-        "  ✅ 本文件已**自动补偿**：SRT 的**第一条是一条空的占位字幕**（0 ~ 0.001s）。",
-        "     🚫 **请不要删掉它** —— 它占住第 0 帧，后面的字幕才会落到正确位置。",
-        "",
-        "  导入方式：File > Import > Subtitle... 选这个 .srt，",
-        "     再在字幕轨上右键 →「将所选字幕插入到… > 使用时间码的时间线」。",
-        "     拖到字幕轨也可以（实测结果相同）。",
-        "  自检：第一条**有内容**的字幕不该紧贴 0 帧，而应在开头稍后一点出现。",
-        "     若它仍贴在第 0 帧，说明补偿没生效，请把这条 SRT 发我。",
+        "  ✅ 两份 SRT 都已**自动补偿**：第一条是一条**空的**占位字幕（时长 0.001s）。",
+        "     🚫 **请不要删掉它** —— 达芬奇可能把 SRT 的第一条强行对齐到",
+        "        时间线起点；让这条空字幕去顶，后面的字幕才会落到正确位置。",
+        "  自检：第一条**有内容**的字幕不应该正好压在时间线起点上。",
         "",
         "【⚠️ 关于字幕样式】",
         "  导出通道**不会带上**你在 SliceQ 里设的字幕样式"

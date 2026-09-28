@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ... import (analyzer, asr_models, bridge, config, ffmpeg_tools, secrets,
@@ -44,12 +44,36 @@ class SettingsPage(QWidget):
         title.setStyleSheet("font-size:20px;font-weight:600;")
         root.addWidget(title)
 
-        root.addWidget(self._build_api_group())
-        root.addWidget(self._build_ffmpeg_group())
-        root.addWidget(self._build_model_group())
-        root.addWidget(self._build_perf_group())
-        root.addWidget(self._build_bridge_group())
-        root.addStretch(1)
+        # ★ 分组必须放进**滚动区**（2026-09-28 干净虚拟机验证发现）
+        #
+        # 踩的坑：这 5 个分组叠起来的自然高度 ≈973px。`QStackedWidget` 会把
+        #   **所有页面的最大最小尺寸** 当成自己的最小尺寸 ⇒ 主窗口最小高度被顶到
+        #   973、最小宽度顶到 1058，代码里的 `resize(1180, 720)` 因此完全无效。
+        #   在 768p 屏（或 1080p @125% 缩放）上窗口比屏幕还大，
+        #   **底部内容被裁到屏幕之外，而且拖不上来** ——
+        #   用户够不到「FFmpeg 下载」入口，偏偏那是干净机器上必做的第一步。
+        #   ⚠️ 这个缺陷在开发者的大屏机器上完全看不出来。
+        holder = QWidget()
+        inner = QVBoxLayout(holder)
+        inner.setContentsMargins(0, 0, 8, 0)
+        inner.setSpacing(16)
+
+        inner.addWidget(self._build_api_group())
+        inner.addWidget(self._build_ffmpeg_group())
+        inner.addWidget(self._build_model_group())
+        inner.addWidget(self._build_perf_group())
+        inner.addWidget(self._build_bridge_group())
+        inner.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(holder)
+        # 纵向按需滚动；横向也用 AsNeeded —— 若某个分组比窗口还宽，
+        # 宁可出现横向滚动条，也不能把控件切到够不到。
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        root.addWidget(scroll, 1)
 
     # ── 外部工具（阶段 4 · F16）───────────────────────────
     def _build_bridge_group(self) -> QGroupBox:

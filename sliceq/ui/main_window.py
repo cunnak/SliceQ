@@ -13,6 +13,9 @@
 """
 from __future__ import annotations
 
+import logging
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
@@ -32,7 +35,17 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{config.APP_DISPLAY_NAME} v{config.VERSION}")
-        self.resize(1180, 720)
+        # 初始尺寸**不要超过屏幕可用区域**（2026-09-28 干净虚拟机验证发现）：
+        # 固定写 1180x720 时，在 1024x768 这类小屏上窗口右边/下边会落到屏幕外，
+        # 而 Windows 不允许把标题栏拖出上边界 ⇒ 那部分内容用户**永远够不到**。
+        from PySide6.QtWidgets import QApplication
+        scr = QApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr else None
+        w0, h0 = 1180, 720
+        if avail is not None:
+            w0 = min(w0, max(760, avail.width() - 40))
+            h0 = min(h0, max(560, avail.height() - 40))
+        self.resize(w0, h0)
         self.setAcceptDrops(True)
 
         self.pool = WorkerPool(max_threads=4)
@@ -106,6 +119,23 @@ class MainWindow(QMainWindow):
         """)
 
         self._probe_env()
+
+        # ── 诊断开关（生产环境不设置 = 完全不执行）─────────────────
+        # 用途：发布版是 `--windowed` 打包，在别人机器上出现"界面少画东西"
+        #       时，用它区分「文案压根没设上」与「控件没被画出来」。
+        # 用法：启动前设 SLICEQ_DIAG=1，然后读 logs/sliceq.log 里 [DIAG] 行。
+        if os.environ.get("SLICEQ_DIAG"):
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(4000, self._diag_hint)
+
+    def _diag_hint(self) -> None:
+        """把侧栏提示控件的**真实状态**写进日志（仅 SLICEQ_DIAG=1 时调用）。"""
+        h = self.env_hint
+        logging.getLogger("sliceq.ui").info(
+            "[DIAG] env_hint text=%r visible=%s geo=%s sizeHint=%s "
+            "| sidebar=%s | window=%s",
+            h.text(), h.isVisible(), h.geometry(), h.sizeHint(),
+            h.parentWidget().size() if h.parentWidget() else None, self.size())
 
     # ─────────────────────────────────────────────────────
     @guard_ui

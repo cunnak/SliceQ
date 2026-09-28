@@ -277,11 +277,15 @@ def t_otio() -> None:
            "SliceQ" in (tv.name or "") and "SliceQ" in (ta.name or ""),
            f"{tv.name!r} / {ta.name!r}")
 
-    # ── 导入说明新增的两条（2026-09-27 真机踩到）────────────
-    ck("★ 说明里指出了「达芬奇两种导入方式结果相同」（实测结论）",
-       "无论用哪种方式" in guide, "")
-    ck("★ 说明里给了改起始时间码的确切入口（右键时间线，不是项目设置）",
-       "右键你的时间线" in guide and "时间线设置" in guide, "")
+    # ── 导入说明的关键提醒（2026-09-27 / 09-28 真机踩到）──────────
+    ck("★ 说明里点明了「点了没反应 = 时间码基准不对」",
+       "点了没反应" in guide and "静默忽略" in guide, "")
+    ck("★ 说明里给了改起始时间码的确切入口（右键时间线 → 时间线设置）",
+       "右键那条时间线" in guide and "时间线设置" in guide, "")
+    ck("★★ 说明里警告「每导入一次 OTIO 都会新建时间线、起点回到默认」",
+       "每导入一次" in guide and "自动带过来" in guide, "")
+    ck("★ 说明里有「用哪份 SRT」的对照表（两份文件名都出现）",
+       "_达芬奇默认时间码.srt" in guide and "00:00:00:00（被你改成了0）" in guide, "")
     ck("★ 说明里提醒「哨兵占位条不要删」",
        "占位" in guide and "不要删" in guide, "")
     ck("说明里写了时间线起始时间码 / 帧率的关系（R20）",
@@ -335,6 +339,45 @@ def t_otio() -> None:
         ck("首条已是 0 ⇒ 不插哨兵（幂等）", added0 is False, "")
         ck("不插哨兵时内容原样复制",
            "丙" in _d0.read_text(encoding="utf-8"), "")
+
+        # ── ★★ 两份 SRT：零基 + 达芬奇默认时间码（2026-09-28）────────
+        # 背景：达芬奇**新建时间线**的起始时间码默认 01:00:00:00
+        #       （实测 MediaExtents=[3600.0, 时长]），而我们的 SRT 是零基的
+        #       ⇒ 整份落在时间线起点之前 ⇒ 达芬奇静默忽略插入（点了没反应）。
+        #       用户为此连试五轮 ⇒ 与其让他改设置，不如直接给一份对得上的。
+        _d3600 = WORK / "sent_out3600.srt"
+        E.write_davinci_srt(_src, _d3600, offset=E.DAVINCI_DEFAULT_OFFSET)
+        _t3600 = _d3600.read_text(encoding="utf-8")
+        ck("★ offset=3600 时哨兵落在 01:00:00,000",
+           "01:00:00,000 --> 01:00:00,001" in _t3600, "")
+        ck("★ offset=3600 时真首条仍在 +0.500s（01:00:00,500）",
+           "01:00:00,500" in _t3600, "")
+
+        def _secs(txt: str) -> list[float]:
+            out_ = []
+            for h, mi, s, ms in re.findall(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})",
+                                           txt):
+                out_.append(int(h) * 3600 + int(mi) * 60 + int(s)
+                            + int(ms) / 1000)
+            return out_
+
+        zs, ds = _secs(_t1), _secs(_t3600)
+        ck("★ 两份 SRT 的时间码**逐条**相差恰好 3600s（不是只平移首条）",
+           len(zs) == len(ds) and len(zs) >= 6
+           and all(abs(b - a - 3600) < 1e-6 for a, b in zip(zs, ds)),
+           f"差集 {[round(b - a, 3) for a, b in zip(zs, ds)][:6]}")
+
+    # 导出目录里两份 SRT 都要在
+    srt_zero = out / "结构测试.srt"
+    srt_dv = out / "结构测试_达芬奇默认时间码.srt"
+    ck("★ 达芬奇通道产出第二份 SRT（+1h，默认项目开箱即用）",
+       srt_dv.exists(), str(sorted(p.name for p in out.glob("*.srt"))))
+    if srt_zero.exists() and srt_dv.exists():
+        _z = _secs(srt_zero.read_text(encoding="utf-8"))
+        _d = _secs(srt_dv.read_text(encoding="utf-8"))
+        ck("★ 两份产出文件时间码逐条相差 3600s",
+           len(_z) == len(_d) and len(_z) >
+           0 and all(abs(b - a - 3600) < 1e-6 for a, b in zip(_z, _d)), "")
 
 
 def t_jianying() -> None:

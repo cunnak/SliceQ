@@ -166,10 +166,30 @@ def main() -> int:
     if guide.exists():
         g = guide.read_text(encoding="utf-8")
         ck("★ 说明里有「起始时间码」小节（R20）", "起始时间码" in g)
-        ck("★ 说明里给了确切入口（右键时间线，不是项目设置）",
-           "右键你的时间线" in g)
+        ck("★ 说明里给了确切入口（右键时间线 → 时间线设置）",
+           "右键那条时间线" in g and "时间线设置" in g)
+        ck("★★ 说明里警告「每导入一次 OTIO 都会新建时间线、起点回到默认」",
+           "每导入一次" in g and "自动带过来" in g)
+        ck("★ 说明里有「用哪份 SRT」对照表", "_达芬奇默认时间码.srt" in g)
         ck("★ 说明里提醒哨兵占位条不要删", "占位" in g and "不要删" in g)
         ck("说明里写了本素材帧率", f"{media.fps:g}" in g)
+
+    # ★ 两份 SRT 都要在原位，且时间码相差 3600s
+    import re as _re
+    _z = Path(dv.out_dir) / f"{otio_path.stem}.srt"
+    _d = Path(dv.out_dir) / f"{otio_path.stem}_达芬奇默认时间码.srt"
+    ck("★ 零基 SRT 已产出", _z.exists())
+    ck("★ 达芬奇默认时间码 SRT 已产出（+1h）", _d.exists())
+    if _z.exists() and _d.exists():
+        def _s(t):
+            return [int(a)*3600+int(b)*60+int(c)+int(d)/1000 for a, b, c, d
+                    in _re.findall(r"(\d{2}):(\d{2}):(\d{2}),(\d{3})", t)]
+        _a = _s(_z.read_text(encoding="utf-8"))
+        _b = _s(_d.read_text(encoding="utf-8"))
+        ck("★★ 两份 SRT 时间码逐条相差恰好 3600s",
+           len(_a) == len(_b) and len(_a) > 0
+           and all(abs(y - x - 3600) < 1e-6 for x, y in zip(_a, _b)),
+           f"{len(_a)} vs {len(_b)} 条")
 
     print("\n" + "=" * 78)
     if FAIL:

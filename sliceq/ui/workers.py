@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import logging
 import traceback
 from typing import Any, Callable
 
@@ -139,11 +140,20 @@ def guard_ui(fn: Callable) -> Callable:
 
     Qt 的信号槽里抛异常默认会被吞或让进程直接挂掉，
     这里至少保证不会静默失败。
+
+    ⚠️ **必须同时写进日志**（不能只 print_exc）：
+    发布版是 `--windowed` 打包，双击启动时 **sys.stderr 是 None**，
+    `traceback.print_exc()` 会写进一个不存在的地方 ⇒ 用户的崩溃
+    在我们这边完全看不到。2026-09-28 干净虚拟机验证时踩到：
+    侧栏环境提示条整块空白，而日志里一条错误都没有。
     """
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
         except Exception:
             traceback.print_exc()
+            logging.getLogger("sliceq.ui").exception(
+                "UI 回调 %s 抛异常（已吞，界面可能少画东西）",
+                getattr(fn, "__qualname__", fn))
             return None
     return wrapper
