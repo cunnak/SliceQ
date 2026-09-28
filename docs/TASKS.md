@@ -858,10 +858,14 @@
       **两个前置条件缺一不可**：① 时间线要有**字幕轨道**（新建时间线默认没有）
       ② 时间码基准要对上（用 `_达芬奇默认时间码.srt` 那份）。
       详见 `reports/STAGE5-REAL-LOAD-VERIFICATION.md` §9。
-- [ ] **GitHub 仓库公开、Release 附件可下载、版本号规范**
-      gh 已安装（账号 `cunnak`，scopes 含 `repo`；先前那个"令牌超时"
-      是**沙箱预置代理不通外网**造成的假象）。
-      版本号单一来源已确认（`sliceq/config.py: VERSION = "0.1.0"`）。
+- [x] **★ GitHub 仓库公开、Release 附件可下载、版本号规范**（2026-09-28 完成）
+      **仓库**：https://github.com/cunnak/SliceQ （Public，default_branch=main）
+      **Release**：https://github.com/cunnak/SliceQ/releases/tag/v0.1.0
+      **附件**：`SliceQ.exe` 63,166,168 字节，`state=uploaded`，直链实测 HTTP 206
+      **SHA256**：`cc99a6e40c3a02377639f4075733d73786eb993caecdf6ec521fcc94fc1c98cb`
+      **校验**：本地 HEAD == 远端 HEAD（`7a7fb0f…`）
+      详见 `reports/STAGE6-PUBLISH-RESULT.md`
+      ⏳ 仍未做：exe 图标（.ico）、README 截图、仓库 topics
 
 【发布前处理（已完成）】
 
