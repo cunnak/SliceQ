@@ -50,7 +50,7 @@
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `SliceQ.exe` | **60.2 MB**（63,170,990 字节） | PyInstaller onefile，单文件免安装；不含 FFmpeg |
+| `SliceQ.exe` | **60.2 MB**（63,168,464 字节） | PyInstaller onefile，单文件免安装；不含 FFmpeg |
 
 ```
 SHA256  e2f7eead965efe030173ce678776b4afa6d3bb5697cffbc61caba2a26c44dde3
