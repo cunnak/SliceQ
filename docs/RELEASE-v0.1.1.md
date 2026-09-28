@@ -50,11 +50,13 @@
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `SliceQ.exe` | 见下方 | PyInstaller onefile，单文件免安装；不含 FFmpeg |
+| `SliceQ.exe` | **60.2 MB**（63,170,990 字节） | PyInstaller onefile，单文件免安装；不含 FFmpeg |
 
 ```
-SHA256  （见本页附件说明）
+SHA256  e2f7eead965efe030173ce678776b4afa6d3bb5697cffbc61caba2a26c44dde3
 ```
+
+校验（PowerShell）：`Get-FileHash .\SliceQ.exe -Algorithm SHA256`
 
 > ⚠️ 首次运行 Windows 可能弹「**Windows 已保护你的电脑**」（未做代码签名）。
 > 点「**更多信息**」→「**仍要运行**」。
