@@ -213,12 +213,25 @@ class ClipsPage(QWidget):
         self.refine_btn.setEnabled(False)
         self.reanalyze_btn.setEnabled(False)
 
+        # ⚠️ **必须传 `with_progress=True`**（2026-09-28 修）。
+        #
+        # `progress` 这个 kwarg 是 `Worker` 在 `with_progress=True` 时才注入的
+        # （见 `workers.Worker.__init__`）。漏传的后果是**静默的**：
+        #     run_analysis(..., progress=None) → on_prog 里 `if progress:` 为假
+        #     → 整条进度链断掉 → 进度条恒为 0、标签永远停在「准备中…」
+        # **不报错、不抛异常**，只是所有进度都消失。
+        #
+        # 全项目其它 6 个 `pool.run` 调用点都传了（copy_dialog / export_dialog /
+        # settings_page ×2 / tasks_page / queue），**只有这里漏了** ——
+        # 于是"从队列跑"有进度、"手动单条跑"没进度。
+        # ⇒ 凡是"进度类参数"，加新调用点时照着老调用点抄，别凭记忆写。
         self._worker = self.pool.run(
             run_analysis, self.task_id, video, self._opts,
             self._auto_continue, user_started_refine,
             on_progress=self._on_progress,
             on_done=self._on_done,
-            on_error=self._on_error)
+            on_error=self._on_error,
+            with_progress=True)
 
     @guard_ui
     def _on_progress(self, done: int, total: int, desc: str) -> None:

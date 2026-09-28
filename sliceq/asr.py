@@ -127,23 +127,47 @@ def _ffmpeg() -> Path:
 
 def _run_ffmpeg(args: list[str], timeout: int = 3600,
                 should_cancel: CancelCb | None = None) -> subprocess.CompletedProcess:
-    """跑一次 ffmpeg，支持取消。"""
+    """跑一次 ffmpeg，支持取消。
+
+    ⚠️⚠️ **必须"边跑边排空管道"**（2026-09-28 实测死锁，release v0.1.0 中招）。
+
+    原实现是「`while True: proc.poll()` 空转 + 结束后才 `communicate()`」——
+    **循环里一个字节都不读**。ffmpeg 把管道缓冲区写满（Windows 上约 64KB）后
+    就**永久阻塞在写上**，而父进程在等它退出 ⇒ 互相等，
+    表现为：**进程活着、CPU 0%、不报错、不结束**。
+
+    实测数据（84 分钟音频，`find_silences` 那条命令）：
+      · 单独跑 **0.8 秒**就能结束
+      · 却往 stderr 写了 **95,662 字节** > 65,536（缓冲区）
+      ⇒ 必然死锁。**静音段越多，stderr 越大 —— 所以只在特定素材上发作。**
+
+    更危险的是第 458 行那条 whisper 转录：它的 stdout 是 JSONL，**动辄几 MB**，
+    同样会堵。
+
+    ✅ `editor.py::_run_ffmpeg` 早已按「stderr 落临时文件」修过同一个坑
+    （见那里的注释），**这里是漏掉的那一处**。
+
+    修法：`communicate(timeout=...)` 会**用后台线程并发读两个管道**；
+    超时抛 `TimeoutExpired`，但**已读到的数据不会丢**，可以继续 communicate。
+    """
     proc = subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace")
     t0 = time.time()
     while True:
-        if proc.poll() is not None:
-            break
-        if should_cancel and should_cancel():
-            proc.kill()
-            raise AsrCancelled("用户取消")
-        if time.time() - t0 > timeout:
-            proc.kill()
-            raise AsrError(f"FFmpeg 超时（>{timeout}s）")
-        time.sleep(0.4)
-    out, err = proc.communicate()
-    return subprocess.CompletedProcess(args, proc.returncode, out, err)
+        try:
+            # ★ 关键：communicate 在等待期间持续排空 stdout+stderr
+            out, err = proc.communicate(timeout=0.5)
+            return subprocess.CompletedProcess(args, proc.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            if should_cancel and should_cancel():
+                proc.kill()
+                proc.communicate()
+                raise AsrCancelled("用户取消")
+            if time.time() - t0 > timeout:
+                proc.kill()
+                proc.communicate()
+                raise AsrError(f"FFmpeg 超时（>{timeout}s）")
 
 
 # ─────────────────────────────────────────────────────────────

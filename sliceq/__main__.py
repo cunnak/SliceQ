@@ -46,6 +46,18 @@ def main() -> int:
     store.init_db()
     log.info("数据库就绪：%s", config.DB_PATH)
 
+    # ── 启动自检：上次被打断留下的「进行中」状态是谎话 ──────────
+    # 程序被强杀 / 卡死后结束 / 断电时，pipeline 的 except 根本来不及跑，
+    # 状态就永远停在 transcribing 之类。用户下次看到「转录中」却不动，
+    # 只会一头雾水。这里回退到有数据支撑的那一档。
+    # 清理失败不能影响启动 —— 状态只是记账。
+    try:
+        for tid, old, new in store.reset_stale_inflight_statuses():
+            log.info("任务 %s 的状态 %s → %s（上次运行被中断，实际没在跑）",
+                     tid, old, new)
+    except BaseException:                      # noqa: BLE001
+        log.exception("清理中断残留状态时出错（已忽略，不影响启动）")
+
     from PySide6.QtWidgets import QApplication
     from .ui.main_window import MainWindow
 

@@ -289,6 +289,53 @@ def delete_task(task_id: int) -> None:
 
 
 # ─────────────────────────────────────────────────────────────
+# 启动自检：清理"上次被打断"留下的进行中状态
+# ─────────────────────────────────────────────────────────────
+# 这些状态**只在程序运行时**成立。程序不在跑，它们就是谎话。
+_INFLIGHT_STATUSES = (
+    config.STATUS_TRANSCRIBING,
+    config.STATUS_ROUGHING,
+    config.STATUS_REFINING,
+    config.STATUS_EXPORTING,
+)
+
+
+def reset_stale_inflight_statuses() -> list[tuple[int, str, str]]:
+    """把上次运行被打断时留下的"进行中"状态，回退到**有数据支撑**的那一档。
+
+    ── 为什么必须有这个（2026-09-28 线上踩到）────────────────────
+    程序**没有抛异常**就没了的时候（被强杀 / 卡死后手动结束 / 断电），
+    `pipeline.run()` 里的 `except BaseException: _mark(ERROR)` **根本不会执行** ——
+    进程直接就没了。于是任务状态永远停在 `transcribing` / `roughing` /
+    `refining` / `exporting`，而实际什么都没在跑。
+    用户下次打开看到「转录中」却永远不动，只能一头雾水。
+    （`MainWindow.closeEvent` 的注释里早就写了这个风险，但一直没做恢复。）
+
+    ── 回退依据是**数据**，不是时间戳 ────────────────────────────
+      有切片段 → `ready`（待导出）　否则 → `imported`（已导入）
+
+    安全性：`status` 全程**只被写、从不参与控制流**（`pipeline` 只写不读），
+    转录缓存也是**按文件**判断的 ⇒ 回退不会引起重跑，也不会丢缓存。
+
+    返回 `[(task_id, 原状态, 新状态)]`，供调用方记日志。
+    """
+    fixed: list[tuple[int, str, str]] = []
+    placeholders = ",".join("?" * len(_INFLIGHT_STATUSES))
+    rows = _rows(f"SELECT id, status FROM task WHERE status IN ({placeholders})",
+                 _INFLIGHT_STATUSES)
+    if not rows:
+        return fixed
+    for r in rows:
+        tid = int(r["id"])
+        has_clips = _one("SELECT COUNT(*) AS n FROM clip WHERE task_id=?",
+                         (tid,))["n"] > 0
+        new_status = config.STATUS_READY if has_clips else config.STATUS_IMPORTED
+        set_task_status(tid, new_status)
+        fixed.append((tid, str(r["status"]), new_status))
+    return fixed
+
+
+# ─────────────────────────────────────────────────────────────
 # clip
 # ─────────────────────────────────────────────────────────────
 def add_clip(task_id: int, start: float, end: float, *,
