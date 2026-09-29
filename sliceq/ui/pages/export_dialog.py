@@ -31,12 +31,7 @@ from PySide6.QtWidgets import (
 from ... import (analyzer, asr, config, editor, enhance, exporter, prompts,
                  secrets, settings, store, subtitle_style)
 from ..workers import guard_ui
-
-MUTED = "#888780"
-OK_COLOR = "#1D9E75"
-BAD_COLOR = "#E24B4A"
-WARN_COLOR = "#BA7517"
-
+from .. import theme
 
 class ExportDialog(QDialog):
     """导出对话框。"""
@@ -75,7 +70,7 @@ class ExportDialog(QDialog):
 
         self.summary = QLabel("")
         self.summary.setWordWrap(True)
-        self.summary.setStyleSheet(f"color:{MUTED};")
+        self.summary.setStyleSheet(f"color:{theme.muted()};")
         root.addWidget(self.summary)
 
         # ── 导出内容 ──────────────────────────────────
@@ -107,7 +102,7 @@ class ExportDialog(QDialog):
 
         self.content_note = QLabel("")
         self.content_note.setWordWrap(True)
-        self.content_note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.content_note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         content_lay.addWidget(self.content_note)
         root.addWidget(content_box)
 
@@ -119,7 +114,7 @@ class ExportDialog(QDialog):
         out_lay = QHBoxLayout(out_box)
         self.out_edit = QLabel("")
         self.out_edit.setWordWrap(True)
-        self.out_edit.setStyleSheet("color:#55585e;")
+        self.out_edit.setStyleSheet(f"color:{theme.border()};")
         out_lay.addWidget(self.out_edit, 1)
         pick = QPushButton("选择目录")
         pick.clicked.connect(self._pick_dir)
@@ -143,7 +138,7 @@ class ExportDialog(QDialog):
 
         self.mode_note = QLabel("")
         self.mode_note.setWordWrap(True)
-        self.mode_note.setStyleSheet(f"color:{WARN_COLOR};font-size:12px;")
+        self.mode_note.setStyleSheet(f"color:{theme.warn()};font-size:12px;")
         mode_lay.addWidget(self.mode_note)
         root.addWidget(mode_box)
 
@@ -208,7 +203,7 @@ class ExportDialog(QDialog):
 
         self.enh_note = QLabel("")
         self.enh_note.setWordWrap(True)
-        self.enh_note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.enh_note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         enh_lay.addWidget(self.enh_note)
         root.addWidget(enh_box)
         self._fill_bgm()
@@ -235,7 +230,7 @@ class ExportDialog(QDialog):
         bi_lay.addLayout(bi_row)
         self.bi_note = QLabel("")
         self.bi_note.setWordWrap(True)
-        self.bi_note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.bi_note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         bi_lay.addWidget(self.bi_note)
         root.addWidget(bi_box)
 
@@ -247,7 +242,7 @@ class ExportDialog(QDialog):
 
         self.status = QLabel("准备就绪")
         self.status.setWordWrap(True)
-        self.status.setStyleSheet(f"color:{MUTED};")
+        self.status.setStyleSheet(f"color:{theme.muted()};")
         root.addWidget(self.status)
 
         # ── 按钮 ──
@@ -441,7 +436,7 @@ class ExportDialog(QDialog):
             self.status.setText(
                 f"源视频不在了：{video}\n"
                 "导出需要读源片。请确认它没被移动或删除。")
-            self.status.setStyleSheet(f"color:{BAD_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.danger()};")
             return
 
         # 读转录分段（落库的那份），转成 asr.Segment
@@ -465,7 +460,7 @@ class ExportDialog(QDialog):
         want_dv = self.dv_check.isChecked()
         if not (want_clips or want_jy or want_dv):
             self.status.setText("至少勾选一项导出内容。")
-            self.status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.warn()};")
             return
 
         self._set_running(True)
@@ -528,7 +523,7 @@ class ExportDialog(QDialog):
         self.bar.setValue(max(0, min(100, int(done))))
         if desc:
             self.status.setText(desc)
-            self.status.setStyleSheet(f"color:{MUTED};")
+            self.status.setStyleSheet(f"color:{theme.muted()};")
 
     @guard_ui
     def _done(self, result) -> None:
@@ -561,11 +556,11 @@ class ExportDialog(QDialog):
 
         if not parts:
             self.status.setText("导出结束，但没有任何产出。")
-            self.status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.warn()};")
             return
         self.status.setText("\n".join(p for p in parts if p))
         self.status.setStyleSheet(
-            f"color:{OK_COLOR if all_ok else WARN_COLOR};")
+            f"color:{theme.ok() if all_ok else theme.warn()};")
 
     def _clips_text(self, result: editor.ExportResult) -> str:
         """成片导出的结果文本。"""
@@ -623,7 +618,7 @@ class ExportDialog(QDialog):
     def _failed(self, msg: str, detail: str = "") -> None:
         self._set_running(False)
         self.status.setText(f"导出失败：{msg.splitlines()[0][:160]}")
-        self.status.setStyleSheet(f"color:{BAD_COLOR};")
+        self.status.setStyleSheet(f"color:{theme.danger()};")
 
     def _sync_enabled(self) -> None:
         """按「运行态 × 业务可用性」两个来源统一刷新控件状态。
@@ -659,7 +654,7 @@ class ExportDialog(QDialog):
             self.content_note.setText(
                 "⚠️ 三项都没勾 —— 点了导出不会有任何产出。")
             self.content_note.setStyleSheet(
-                f"color:{WARN_COLOR};font-size:12px;")
+                f"color:{theme.warn()};font-size:12px;")
         elif want_jy or want_dv:
             bits: list[str] = []
             if want_jy:
@@ -675,7 +670,7 @@ class ExportDialog(QDialog):
             bits.append("字幕样式不会跟随导出；导完之后还需要在目标软件里"
                         "手动完成最后一步。")
             self.content_note.setText("　".join(bits))
-            self.content_note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+            self.content_note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         else:
             self.content_note.setText("")
         self._sync_enabled()
@@ -703,4 +698,4 @@ class ExportDialog(QDialog):
             super().reject()
         else:
             self.status.setText("正在导出，请等它结束（或等待当前片段完成）。")
-            self.status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.warn()};")

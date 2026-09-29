@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
@@ -18,14 +18,14 @@ from PySide6.QtWidgets import (
 from ... import (analyzer, asr_models, bridge, config, ffmpeg_tools, secrets,
                  settings)
 from ..workers import guard_ui
-
-OK_COLOR = "#1D9E75"
-WARN_COLOR = "#BA7517"
-BAD_COLOR = "#E24B4A"
-MUTED = "#888780"
+from .. import theme
 
 
 class SettingsPage(QWidget):
+    #: 用户改了界面主题（参数 = 模式名：system / light / dark）。
+    #: 由主窗口接住并重建界面 —— 见 `theme.needs_rebuild()` 的说明。
+    theme_changed = Signal(str)
+
     def __init__(self, pool, parent=None) -> None:
         super().__init__(parent)
         self.pool = pool
@@ -63,6 +63,9 @@ class SettingsPage(QWidget):
         inner.addWidget(self._build_model_group())
         inner.addWidget(self._build_perf_group())
         inner.addWidget(self._build_bridge_group())
+        # 外观放最后：模型接口 / FFmpeg / 模型是"必须配"的，外观是"可选的美化"，
+        # 不该占掉新用户首屏的位置。
+        inner.addWidget(self._build_appearance_group())
         inner.addStretch(1)
 
         scroll = QScrollArea()
@@ -74,6 +77,64 @@ class SettingsPage(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         root.addWidget(scroll, 1)
+
+    # ── 外观（v0.1.5 新增）────────────────────────────────
+    def _build_appearance_group(self) -> QGroupBox:
+        """界面主题：深色 / 浅色 / 跟随系统。
+
+        ⚠️ 改了之后要**重建界面**才能完全生效 —— 各页面里有一批
+           `setStyleSheet(f"color:{...}")` 是构造时求值的，全局样式表换掉
+           不会回头改它们（否则会出现"一半新主题、一半旧主题"）。
+           所以这里只负责发信号，重建由主窗口做（它会保留当前页索引）。
+        """
+        box = QGroupBox("外观")
+        form = QFormLayout(box)
+        form.setContentsMargins(12, 14, 12, 12)
+        form.setSpacing(10)
+
+        self.theme_combo = QComboBox()
+        for m in theme.MODES:
+            self.theme_combo.addItem(theme.MODE_LABELS[m], m)
+        cur = settings.get("ui_theme", "system")
+        idx = self.theme_combo.findData(cur)
+        self.theme_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_selected)
+        form.addRow("界面主题", self.theme_combo)
+
+        note = QLabel("「跟随系统」会随 Windows 的浅色/深色设置自动切换。"
+                      "改主题后界面会重建一次，当前所在页面保持不变。")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
+        form.addRow("", note)
+        return box
+
+    @guard_ui
+    def _on_theme_selected(self, _index: int) -> None:
+        """用户在下拉框里选了新主题 —— **只发信号，不落盘**。
+
+        ⚠️ 落盘放在**主窗口**那边、且只在它同意切换之后做。
+           起初这里是"先 `settings.set()` 再 emit"，结果主窗口可能因为
+           有任务在跑而**拒绝切换** —— 于是出现
+           「下拉框退回了、设置里却已经改成新值」：下次启动主题会莫名变掉。
+           ⇒ 谁做决定，谁负责记账。
+        """
+        mode = self.theme_combo.currentData()
+        if not mode:
+            return
+        self.theme_changed.emit(str(mode))
+
+    def sync_theme_combo(self) -> None:
+        """把下拉框退回**已保存**的值。
+
+        主窗口拒绝切换时（比如分析正在进行）会调它 ——
+        否则用户看到的是"我选了深色"，而实际没生效，属于界面说谎。
+        """
+        cur = settings.get("ui_theme", "system")
+        idx = self.theme_combo.findData(cur)
+        if idx >= 0 and idx != self.theme_combo.currentIndex():
+            self.theme_combo.blockSignals(True)
+            self.theme_combo.setCurrentIndex(idx)
+            self.theme_combo.blockSignals(False)
 
     # ── 外部工具（阶段 4 · F16）───────────────────────────
     def _build_bridge_group(self) -> QGroupBox:
@@ -109,7 +170,7 @@ class SettingsPage(QWidget):
 
         self.vc_note = QLabel("")
         self.vc_note.setWordWrap(True)
-        self.vc_note.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        self.vc_note.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         form.addRow("", self.vc_note)
 
         self._refresh_vc()
@@ -120,14 +181,14 @@ class SettingsPage(QWidget):
         info = bridge.find()
         if info.get("ok"):
             self.vc_status.setText(f"已找到（{info['source']}）")
-            self.vc_status.setStyleSheet(f"color:{OK_COLOR};")
+            self.vc_status.setStyleSheet(f"color:{theme.ok()};")
             self.vc_open_btn.setEnabled(True)
             lines = bridge.handoff_notes()
             self.vc_note.setText("\n".join(lines[1:]) if len(lines) > 1
                                  else "")
         else:
             self.vc_status.setText("未找到")
-            self.vc_status.setStyleSheet(f"color:{MUTED};")
+            self.vc_status.setStyleSheet(f"color:{theme.muted()};")
             self.vc_open_btn.setEnabled(False)
             msg = ("SliceQ 不会自动去寻找安装在其他位置的程序。"
                    "如果你装了 VideoCaptioner，把它的目录填在左边即可启用联动。")
@@ -154,7 +215,7 @@ class SettingsPage(QWidget):
         ok, msg = bridge.launch()
         self.vc_note.setText(msg)
         self.vc_note.setStyleSheet(
-            f"font-size:11px;color:{OK_COLOR if ok else BAD_COLOR};")
+            f"font-size:11px;color:{theme.ok() if ok else theme.danger()};")
 
     # ── 分析性能 ─────────────────────────────────────────
     def _build_perf_group(self) -> QGroupBox:
@@ -187,7 +248,7 @@ class SettingsPage(QWidget):
             "（只影响粗筛与精析。转录固定串行 —— 实测 GPU 上并发转录"
             "不但不快，4 路还比串行慢 43%。）")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        hint.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         form.addRow("", hint)
         return box
 
@@ -237,7 +298,7 @@ class SettingsPage(QWidget):
         # 某中转站在本网络下被 SNI 定向阻断（TCP 通、TLS 握手被 RST），
         # 不开「绕过 SNI 阻断」根本连不上。
         net_hint = QLabel("网络适配（连不上中转站时再动）")
-        net_hint.setStyleSheet(f"color:{MUTED};font-size:12px;margin-top:6px;")
+        net_hint.setStyleSheet(f"color:{theme.muted()};font-size:12px;margin-top:6px;")
         form.addRow("", net_hint)
 
         self.proxy_combo = QComboBox()
@@ -260,7 +321,7 @@ class SettingsPage(QWidget):
             "⚠️ 开启后必须关闭证书校验（证书绑定的是域名，用 IP 连必然对不上），"
             "**会失去中间人防护**。只在域名被定向阻断、且没有可用代理时开启。")
         sni_warn.setWordWrap(True)
-        sni_warn.setStyleSheet(f"color:{WARN_COLOR};font-size:12px;")
+        sni_warn.setStyleSheet(f"color:{theme.warn()};font-size:12px;")
         form.addRow("", sni_warn)
 
         test_row = QHBoxLayout()
@@ -272,13 +333,13 @@ class SettingsPage(QWidget):
 
         self.test_result = QLabel("")
         self.test_result.setWordWrap(True)
-        self.test_result.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.test_result.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         form.addRow("", self.test_result)
 
         note = QLabel("Key 使用 Windows DPAPI 加密，只绑定当前用户账户——"
                       "文件被拷到别的电脑也解不开。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         form.addRow("", note)
         return box
 
@@ -313,7 +374,7 @@ class SettingsPage(QWidget):
         """
         self._persist_endpoint()
         self.test_result.setText("测试中…")
-        self.test_result.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.test_result.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
 
         mode = self.proxy_combo.currentData()
         self.pool.run(
@@ -327,7 +388,7 @@ class SettingsPage(QWidget):
             on_error=lambda m, d: (
                 self.test_result.setText(f"测试出错：{m}"),
                 self.test_result.setStyleSheet(
-                    f"color:{BAD_COLOR};font-size:12px;")))
+                    f"color:{theme.danger()};font-size:12px;")))
 
     @guard_ui
     def _on_test_done(self, result: object) -> None:
@@ -349,18 +410,18 @@ class SettingsPage(QWidget):
 
         self.test_result.setText("\n".join(lines))
         self.test_result.setStyleSheet(
-            f"color:{OK_COLOR if result.get('ok') else BAD_COLOR};font-size:12px;")
+            f"color:{theme.ok() if result.get('ok') else theme.danger()};font-size:12px;")
 
     def refresh_key(self) -> None:
         key = secrets.get_api_key()
         if key:
             self.key_status.setText(f"当前：{secrets.mask(key)}")
-            self.key_status.setStyleSheet(f"color:{OK_COLOR};font-size:12px;")
+            self.key_status.setStyleSheet(f"color:{theme.ok()};font-size:12px;")
             if not self.key_edit.text():
                 self.key_edit.setText(key)
         else:
             self.key_status.setText("尚未设置 —— 阶段 2 的分析功能需要它")
-            self.key_status.setStyleSheet(f"color:{WARN_COLOR};font-size:12px;")
+            self.key_status.setStyleSheet(f"color:{theme.warn()};font-size:12px;")
 
     # ── FFmpeg ───────────────────────────────────────────
     def _build_ffmpeg_group(self) -> QGroupBox:
@@ -396,7 +457,7 @@ class SettingsPage(QWidget):
             "essentials 构建缺少该滤镜，阶段 2 的转录会不可用。"
             "下载到本地后运行，不打包进程序（GPL 合规）。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         lay.addWidget(note)
         return box
 
@@ -413,11 +474,11 @@ class SettingsPage(QWidget):
     def _on_ffmpeg_probe(self, info: dict) -> None:
         if info.get("ok"):
             self.ffmpeg_status.setText(f"✅ {info.get('message')}\n{info.get('ffmpeg')}")
-            self.ffmpeg_status.setStyleSheet(f"color:{OK_COLOR};")
+            self.ffmpeg_status.setStyleSheet(f"color:{theme.ok()};")
             self.ffmpeg_install_btn.setEnabled(False)
         else:
             self.ffmpeg_status.setText(f"⚠️ {info.get('message')}")
-            self.ffmpeg_status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.ffmpeg_status.setStyleSheet(f"color:{theme.warn()};")
             self.ffmpeg_install_btn.setEnabled(True)
 
     @guard_ui
@@ -479,7 +540,7 @@ class SettingsPage(QWidget):
         note = QLabel("走 hf-mirror.com 镜像下载（HuggingFace 国内直连不通）。"
                       "模型存在本地，只在首次使用或换模型时下载。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        note.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         lay.addWidget(note)
         return box
 
@@ -489,10 +550,10 @@ class SettingsPage(QWidget):
         if asr_models.is_installed(name):
             mb = asr_models.installed_size_mb(name)
             self.model_status.setText(f"✅ 已安装：{name}（{mb}MB）")
-            self.model_status.setStyleSheet(f"color:{OK_COLOR};")
+            self.model_status.setStyleSheet(f"color:{theme.ok()};")
         else:
             self.model_status.setText(f"⚠️ 未安装：{name}")
-            self.model_status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.model_status.setStyleSheet(f"color:{theme.warn()};")
 
     @guard_ui
     def _download_model(self) -> None:
@@ -518,7 +579,7 @@ class SettingsPage(QWidget):
     @guard_ui
     def _on_model_error(self, msg: str) -> None:
         self.model_bar.setVisible(False)
-        self.model_status.setStyleSheet(f"color:{BAD_COLOR};")
+        self.model_status.setStyleSheet(f"color:{theme.danger()};")
         self.model_status.setText(f"下载失败：{msg}")
         QMessageBox.warning(self, "下载失败", msg)
 
@@ -553,7 +614,7 @@ class SettingsPage(QWidget):
     def _on_ffmpeg_error(self, msg: str, detail: str) -> None:
         self.ffmpeg_bar.setVisible(False)
         self.ffmpeg_install_btn.setEnabled(True)
-        self.ffmpeg_status.setStyleSheet(f"color:{BAD_COLOR};")
+        self.ffmpeg_status.setStyleSheet(f"color:{theme.danger()};")
         self.ffmpeg_status.setText(f"失败：{msg}")
         QMessageBox.warning(self, "FFmpeg 安装失败", msg)
 

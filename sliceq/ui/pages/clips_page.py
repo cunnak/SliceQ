@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from ... import analyzer, config, ffmpeg_tools, pipeline, subproc, store
 from ..workers import guard_ui
 from .copy_dialog import CopyDialog
+from .. import theme
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class ClipsPage(QWidget):
         self._auto_continue = False
         self._last: pipeline.RunResult | None = None
         self._worker = None
+        self._analyzing = False
         self._build()
 
     # ─────────────────────────────────────────────────────
@@ -129,7 +131,7 @@ class ClipsPage(QWidget):
         lay.addLayout(head)
 
         self.subtitle = QLabel("从「任务」页选一个任务，点「分析」开始。")
-        self.subtitle.setStyleSheet("color:#888780;font-size:12px;")
+        self.subtitle.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         self.subtitle.setWordWrap(True)
         lay.addWidget(self.subtitle)
 
@@ -144,7 +146,7 @@ class ClipsPage(QWidget):
         self.bar.setFixedHeight(6)
         pl.addWidget(self.bar)
         self.progress_lbl = QLabel("")
-        self.progress_lbl.setStyleSheet("color:#888780;font-size:12px;")
+        self.progress_lbl.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         prow = QHBoxLayout()
         prow.setContentsMargins(0, 0, 0, 0)
         prow.setSpacing(10)
@@ -159,8 +161,8 @@ class ClipsPage(QWidget):
         self.hint_btn.setFlat(True)
         self.hint_btn.setStyleSheet(
             "QPushButton{border:none;background:transparent;padding:0;"
-            "color:#B26B00;font-size:12px;text-decoration:underline;}"
-            "QPushButton:hover{color:#8A5200;}")
+            f"color:{theme.warn()};font-size:12px;text-decoration:underline;}}"
+            f"QPushButton:hover{{color:{theme.warn_hover()};}}")
         self.hint_btn.clicked.connect(self._show_hints)
         self.hint_btn.setVisible(False)
         prow.addWidget(self.hint_btn)
@@ -190,7 +192,7 @@ class ClipsPage(QWidget):
 
         # ── 对账条 ────────────────────────────────────
         self.footer = QLabel("")
-        self.footer.setStyleSheet("color:#888780;font-size:12px;")
+        self.footer.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         self.footer.setWordWrap(True)
         lay.addWidget(self.footer)
 
@@ -247,6 +249,7 @@ class ClipsPage(QWidget):
         # settings_page ×2 / tasks_page / queue），**只有这里漏了** ——
         # 于是"从队列跑"有进度、"手动单条跑"没进度。
         # ⇒ 凡是"进度类参数"，加新调用点时照着老调用点抄，别凭记忆写。
+        self._analyzing = True
         self._worker = self.pool.run(
             run_analysis, self.task_id, video, self._opts,
             self._auto_continue, user_started_refine,
@@ -268,9 +271,19 @@ class ClipsPage(QWidget):
         self.progress_lbl.setText(desc)
         # 任务状态落库**不在这里** —— 见文件头注释（v1.17 移到 pipeline 里）
 
+    def is_analyzing(self) -> bool:
+        """是否正在分析。
+
+        主窗口换主题前会问这个 —— 重建界面会把进度显示清空，
+        而分析还在跑，用户会看到「进度凭空消失」。
+        """
+        return self._analyzing
+
     @guard_ui
     def _on_done(self, result) -> None:
         self._last = result
+        self._analyzing = False
+        self._worker = None          # 别留幽灵引用（原先从不清空）
         self.bar.setValue(100)
         self.refine_btn.setEnabled(True)
         self.reanalyze_btn.setEnabled(True)
@@ -300,6 +313,8 @@ class ClipsPage(QWidget):
     @guard_ui
     def _on_error(self, msg: str, detail: str) -> None:
         self.progress_box.setVisible(False)
+        self._analyzing = False
+        self._worker = None          # 别留幽灵引用（原先从不清空）
         self.refine_btn.setEnabled(True)
         self.reanalyze_btn.setEnabled(True)
         # 状态（出错 / 已取消）由 pipeline 落库，不在这里写 ——

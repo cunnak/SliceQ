@@ -39,14 +39,10 @@ from PySide6.QtWidgets import (
 from ... import config, settings, subtitle_style
 from ..style_preview import StylePreview
 from ..workers import guard_ui
-
-MUTED = "#888780"
-WARN_COLOR = "#BA7517"
-OK_COLOR = "#1D9E75"
+from .. import theme
 
 # 自动保存延迟：用户连续拖动滑块时不要每次都写盘
 _SAVE_DELAY_MS = 1000
-
 
 class _ColorButton(QPushButton):
     """一个显示当前颜色的方块按钮，点击选色。"""
@@ -60,7 +56,7 @@ class _ColorButton(QPushButton):
 
     def _apply(self) -> None:
         self.setStyleSheet(
-            f"background:{self._color};border:1px solid #55585e;"
+            f"background:{{self._color}};border:1px solid {theme.border()};"
             "border-radius:4px;")
         self.setToolTip(self._color)
 
@@ -70,7 +66,6 @@ class _ColorButton(QPushButton):
     def set_color(self, value: str) -> None:
         self._color = subtitle_style.normalize_hex(value)
         self._apply()
-
 
 class StylePage(QWidget):
     """字幕样式设置页。"""
@@ -145,7 +140,7 @@ class StylePage(QWidget):
         bar.addStretch(1)
 
         self.save_state = QLabel("")
-        self.save_state.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.save_state.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         bar.addWidget(self.save_state)
         return bar
 
@@ -189,7 +184,7 @@ class StylePage(QWidget):
         hint = QLabel("「译文在下」时主字幕在上方；选「译文在上」则反过来。"
                       "垂直间距为两层之间的空隙。")
         hint.setWordWrap(True)
-        hint.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        hint.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         form.addRow("", hint)
         return box
 
@@ -215,7 +210,7 @@ class StylePage(QWidget):
 
         font_warn = QLabel("")
         font_warn.setWordWrap(True)
-        font_warn.setStyleSheet(f"color:{WARN_COLOR};font-size:11px;")
+        font_warn.setStyleSheet(f"color:{theme.warn()};font-size:11px;")
         font_warn.setVisible(False)
         form.addRow("", font_warn)
 
@@ -297,13 +292,13 @@ class StylePage(QWidget):
 
         self.bg_label = QLabel("未选择（用纯色背景）")
         self.bg_label.setWordWrap(True)
-        self.bg_label.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        self.bg_label.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         form.addRow("", self.bg_label)
 
         note = QLabel("预览画布尺寸跟随素材的真实像素；"
                       "没有素材时按所选方向使用默认尺寸。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        note.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         form.addRow("", note)
         return box
 
@@ -384,7 +379,7 @@ class StylePage(QWidget):
             self._check_font(key)
         self.preview.set_preset(self._preset)
         self.save_state.setText("有改动，稍后自动保存…")
-        self.save_state.setStyleSheet(f"color:{WARN_COLOR};font-size:12px;")
+        self.save_state.setStyleSheet(f"color:{theme.warn()};font-size:12px;")
         self._save_timer.start()
 
     def _check_font(self, key: str) -> None:
@@ -411,10 +406,10 @@ class StylePage(QWidget):
         try:
             subtitle_style.save_as_active(self._preset)
             self.save_state.setText(f"已保存到「{self._preset.name}」")
-            self.save_state.setStyleSheet(f"color:{OK_COLOR};font-size:12px;")
+            self.save_state.setStyleSheet(f"color:{theme.ok()};font-size:12px;")
         except Exception as exc:                       # noqa: BLE001
             self.save_state.setText(f"保存失败：{exc}")
-            self.save_state.setStyleSheet(f"color:#E24B4A;font-size:12px;")
+            self.save_state.setStyleSheet(f"color:{theme.danger()};font-size:12px;")
 
     # ─────────────────────────────────────────────────────
     # 交互
@@ -460,7 +455,7 @@ class StylePage(QWidget):
         subtitle_style.set_active_preset(name)
         self._load_preset(loaded, refresh_preview=True)
         self.save_state.setText(f"已切换到「{name}」")
-        self.save_state.setStyleSheet(f"color:{OK_COLOR};font-size:12px;")
+        self.save_state.setStyleSheet(f"color:{theme.ok()};font-size:12px;")
 
     @guard_ui
     def _new_preset(self) -> None:

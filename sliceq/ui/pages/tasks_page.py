@@ -35,12 +35,7 @@ from ... import config, ingest, secrets, settings, store
 from ...ingest import ImportError_
 from ..workers import guard_ui
 from .analyze_dialog import AnalyzeDialog
-
-MUTED = "#888780"
-BAD = "#E24B4A"
-OK_COLOR = "#1D9E75"
-WARN = "#BA7517"
-
+from .. import theme
 
 class DropZone(QLabel):
     """虚线框，接受文件拖入。"""
@@ -55,9 +50,9 @@ class DropZone(QLabel):
         self.setMinimumHeight(110)
         self.setStyleSheet(f"""
             QLabel {{
-                border: 2px dashed {MUTED};
+                border: 2px dashed {theme.muted()};
                 border-radius: 12px;
-                color: {MUTED};
+                color: {theme.muted()};
                 font-size: 14px;
                 padding: 16px;
             }}
@@ -67,18 +62,17 @@ class DropZone(QLabel):
     def dragEnterEvent(self, e) -> None:
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
-            self.setStyleSheet(self.styleSheet().replace(MUTED, "#378ADD"))
+            self.setStyleSheet(self.styleSheet().replace(theme.muted(), f"{theme.accent()}"))
 
     def dragLeaveEvent(self, e) -> None:
-        self.setStyleSheet(self.styleSheet().replace("#378ADD", MUTED))
+        self.setStyleSheet(self.styleSheet().replace(f"{theme.accent()}", theme.muted()))
 
     def dropEvent(self, e) -> None:
-        self.setStyleSheet(self.styleSheet().replace("#378ADD", MUTED))
+        self.setStyleSheet(self.styleSheet().replace(f"{theme.accent()}", theme.muted()))
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
         if paths:
             self.files_dropped.emit(paths)
             e.acceptProposedAction()
-
 
 class TasksPage(QWidget):
     task_opened = Signal(int)
@@ -212,7 +206,7 @@ class TasksPage(QWidget):
         note = QLabel("队列只在本次运行有效，关掉程序就清空"
                       "（已分析过的部分有缓存，重排不会重复花钱）。")
         note.setWordWrap(True)
-        note.setStyleSheet(f"color:{MUTED};font-size:11px;")
+        note.setStyleSheet(f"color:{theme.muted()};font-size:11px;")
         lay.addWidget(note)
 
         self.queue_box = box
@@ -242,8 +236,8 @@ class TasksPage(QWidget):
                 text += f"　{it.message}"
             row = QListWidgetItem(text)
             # 颜色区分状态 —— 一眼能看出哪条挂了
-            color = {"done": OK_COLOR, "failed": BAD,
-                     "running": "#378ADD", "skipped": MUTED}.get(it.state, MUTED)
+            color = {"done": theme.ok(), "failed": theme.danger(),
+                     "running": f"{theme.accent()}", "skipped": theme.muted()}.get(it.state, theme.muted())
             row.setData(Qt.UserRole, i - 1)
             self.queue_list.addItem(row)
             self._color_item(row, color)
@@ -264,14 +258,14 @@ class TasksPage(QWidget):
     def _on_queue_started(self, total: int) -> None:
         self.queue_bar.setValue(0)
         self.queue_status.setText(f"开始处理 {total} 个任务…")
-        self.queue_status.setStyleSheet(f"font-size:12px;color:{MUTED};")
+        self.queue_status.setStyleSheet(f"font-size:12px;color:{theme.muted()};")
         self.queue_stop_btn.setEnabled(True)
 
     @guard_ui
     def _on_queue_progress(self, done: int, total: int, desc: str) -> None:
         self.queue_bar.setValue(max(0, min(100, done)))
         self.queue_status.setText(desc)
-        self.queue_status.setStyleSheet(f"font-size:12px;color:{MUTED};")
+        self.queue_status.setStyleSheet(f"font-size:12px;color:{theme.muted()};")
         self._sync_table_status()
 
     def _sync_table_status(self) -> None:
@@ -301,7 +295,7 @@ class TasksPage(QWidget):
     def _on_queue_finished(self, summary: str) -> None:
         self.queue_bar.setValue(100)
         self.queue_status.setText(f"队列结束：{summary}")
-        self.queue_status.setStyleSheet(f"font-size:12px;color:{OK_COLOR};")
+        self.queue_status.setStyleSheet(f"font-size:12px;color:{theme.ok()};")
         self.queue_stop_btn.setEnabled(False)
         self.refresh()
         self._refresh_queue()
@@ -318,7 +312,7 @@ class TasksPage(QWidget):
     def _on_queue_failed(self, msg: str, detail: str) -> None:
         self.queue_stop_btn.setEnabled(False)
         self.queue_status.setText(f"队列中断：{msg}")
-        self.queue_status.setStyleSheet(f"font-size:12px;color:{BAD};")
+        self.queue_status.setStyleSheet(f"font-size:12px;color:{theme.danger()};")
         self._refresh_queue()
         QMessageBox.warning(self, "队列中断", msg)
 
@@ -328,7 +322,7 @@ class TasksPage(QWidget):
             return
         self.queue.cancel()
         self.queue_status.setText("正在停止…（当前这一步跑完就停）")
-        self.queue_status.setStyleSheet(f"font-size:12px;color:{WARN};")
+        self.queue_status.setStyleSheet(f"font-size:12px;color:{theme.warn()};")
 
     @guard_ui
     def _clear_queue(self) -> None:
@@ -615,5 +609,5 @@ class TasksPage(QWidget):
     # ─────────────────────────────────────────────────────
     def _show_tip(self, text: str, warn: bool = False) -> None:
         self.tip.setText(text)
-        self.tip.setStyleSheet(f"color:{BAD if warn else MUTED};font-size:12px;")
+        self.tip.setStyleSheet(f"color:{theme.danger() if warn else theme.muted()};font-size:12px;")
         self.tip.setVisible(True)

@@ -104,6 +104,15 @@ class WorkerPool:
         self.pool.setMaxThreadCount(max_threads)
         self._active: set[Worker] = set()
 
+    def active_count(self) -> int:
+        """还在跑的 worker 数（0 = 空闲）。
+
+        用途：**重建界面之前**先确认没有任务在跑 ——
+        各页面把进度存在自己身上，重建会把进度丢掉，而 worker 还在跑，
+        用户就会看到"进度条凭空消失、分析却仍在继续"。
+        """
+        return len(self._active)
+
     def run(self, fn: Callable, *args, on_done: Callable | None = None,
             on_error: Callable | None = None,
             on_progress: Callable | None = None,

@@ -198,6 +198,10 @@ class StylePreview(QWidget):
         self.view.setMinimumSize(180, 240)
         self.view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.view.setStyleSheet(
+            # ⚠️ 这里的深色底**刻意不跟 UI 主题**（是唯一一处）：
+            #    它模拟的是**视频画面**（切片成片里字幕压在什么底色上），
+            #    不是窗口面板。浅色主题下也保持深色，用户才能看清
+            #    白色/黄色字幕在暗场里的实际效果。
             "background:#1a1c20;border:1px solid #3a3d42;"
             "border-radius:6px;color:#8b8f96;font-size:12px;")
         lay.addWidget(self.view)

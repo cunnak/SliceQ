@@ -15,7 +15,7 @@ from pathlib import Path
 # ─────────────────────────────────────────────────────────────
 APP_NAME = "SliceQ"
 APP_DISPLAY_NAME = "SliceQ 直播切片"
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 
 
 def _app_root() -> Path:

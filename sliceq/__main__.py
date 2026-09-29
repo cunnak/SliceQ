@@ -60,10 +60,23 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
     from .ui.main_window import MainWindow
+    from .ui import theme
 
     app = QApplication(sys.argv)
     app.setApplicationName(config.APP_NAME)
     app.setApplicationDisplayName(config.APP_DISPLAY_NAME)
+
+    # ★ 主题必须在**创建任何窗口之前**套上。
+    #   各页面里有 90+ 处 `setStyleSheet(f"color:{...}")` 是构造时求值的 ——
+    #   先建窗口再换主题，那些颜色就停在旧主题上了。
+    try:
+        from . import settings
+        mode = settings.get("ui_theme", "system")
+    except Exception:                          # noqa: BLE001
+        log.exception("读取主题设置失败（回退到跟随系统）")
+        mode = "system"
+    actual = theme.apply(app, mode)
+    log.info("界面主题：%s（设置 %s）", theme.MODE_LABELS.get(actual, actual), mode)
 
     win = MainWindow()
     win.show()

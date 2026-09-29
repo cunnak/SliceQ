@@ -21,12 +21,7 @@ from PySide6.QtWidgets import (
 
 from ... import analyzer, asr, copywriter, store
 from ..workers import guard_ui
-
-MUTED = "#888780"
-OK_COLOR = "#1D9E75"
-BAD_COLOR = "#E24B4A"
-WARN_COLOR = "#BA7517"
-
+from .. import theme
 
 class CopyDialog(QDialog):
     """为勾选的候选生成标题与简介。"""
@@ -60,7 +55,7 @@ class CopyDialog(QDialog):
             "生成过程会调用模型，费用极低（实测每条约 ¥0.001，"
             "以百炼账单为准）。")
         self.summary.setWordWrap(True)
-        self.summary.setStyleSheet(f"color:{MUTED};")
+        self.summary.setStyleSheet(f"color:{theme.muted()};")
         root.addWidget(self.summary)
 
         self.bar = QProgressBar()
@@ -69,7 +64,7 @@ class CopyDialog(QDialog):
 
         self.status = QLabel("准备就绪")
         self.status.setWordWrap(True)
-        self.status.setStyleSheet(f"color:{MUTED};")
+        self.status.setStyleSheet(f"color:{theme.muted()};")
         root.addWidget(self.status)
 
         self.text = QTextEdit()
@@ -134,7 +129,7 @@ class CopyDialog(QDialog):
         self.bar.setValue(max(0, min(100, int(done))))
         if desc:
             self.status.setText(desc)
-            self.status.setStyleSheet(f"color:{MUTED};")
+            self.status.setStyleSheet(f"color:{theme.muted()};")
 
     @guard_ui
     def _done(self, results) -> None:
@@ -154,16 +149,16 @@ class CopyDialog(QDialog):
                f"（以百炼账单为准）")
         if notes:
             msg += f"\n注意：{'；'.join(dict.fromkeys(notes))[:200]}"
-            self.status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.warn()};")
         else:
-            self.status.setStyleSheet(f"color:{OK_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.ok()};")
         self.status.setText(msg)
 
     @guard_ui
     def _failed(self, msg: str, detail: str = "") -> None:
         self._set_running(False)
         self.status.setText(msg.splitlines()[0][:200])
-        self.status.setStyleSheet(f"color:{BAD_COLOR};")
+        self.status.setStyleSheet(f"color:{theme.danger()};")
 
     def _set_running(self, running: bool) -> None:
         self.start_btn.setEnabled(not running)
@@ -177,7 +172,7 @@ class CopyDialog(QDialog):
             return
         QApplication.clipboard().setText(body)
         self.status.setText("已复制到剪贴板。")
-        self.status.setStyleSheet(f"color:{OK_COLOR};")
+        self.status.setStyleSheet(f"color:{theme.ok()};")
 
     def reject(self) -> None:                      # noqa: D102  (Qt 回调)
         # 生成中不许关掉 —— 会把请求留在后台（也白花钱）
@@ -185,4 +180,4 @@ class CopyDialog(QDialog):
             super().reject()
         else:
             self.status.setText("正在生成，请等它结束。")
-            self.status.setStyleSheet(f"color:{WARN_COLOR};")
+            self.status.setStyleSheet(f"color:{theme.warn()};")

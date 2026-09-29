@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import analyzer, config, prompts, pipeline, settings
+from .. import theme
 
 # 筛选强度三档。数字来自 TECH-DESIGN §2.5.5
 LEVELS: list[tuple[str, float, str]] = [
@@ -50,7 +51,7 @@ class AnalyzeDialog(QDialog):
         name = self.task.get("name") or "未命名"
         dur_min = self.duration / 60
         head = QLabel(f"<b>{name}</b><br>"
-                      f"<span style='color:#888780;font-size:12px'>"
+                      f"<span style='color:{theme.muted()};font-size:12px'>"
                       f"时长 {dur_min:.1f} 分钟</span>")
         head.setTextFormat(Qt.RichText)
         lay.addWidget(head)
@@ -82,7 +83,7 @@ class AnalyzeDialog(QDialog):
 
         lay.addWidget(QLabel("筛选强度"))
         hint = QLabel("决定最多精读多少内容 —— 也就决定了这一轮花多少钱。")
-        hint.setStyleSheet("color:#888780;font-size:12px;")
+        hint.setStyleSheet(f"color:{theme.muted()};font-size:12px;")
         lay.addWidget(hint)
 
         lv_row = QHBoxLayout()
@@ -114,21 +115,21 @@ class AnalyzeDialog(QDialog):
 
         self.cost_sub = QLabel("—")
         self.cost_sub.setStyleSheet(
-            "color:#888780;font-size:12px;border:none;")
+            f"color:{theme.muted()};font-size:12px;border:none;")
         self.cost_sub.setWordWrap(True)
         bl.addWidget(self.cost_sub)
 
         self.detail_btn = QToolButton()
         self.detail_btn.setText("详情 ▾")
         self.detail_btn.setStyleSheet(
-            "QToolButton{border:none;color:#888780;font-size:12px;}")
+            f"QToolButton{border:none;color:{theme.muted()};font-size:12px;}")
         self.detail_btn.setCheckable(True)
         self.detail_btn.toggled.connect(self._toggle_detail)
         bl.addWidget(self.detail_btn)
 
         self.detail_lbl = QLabel("")
         self.detail_lbl.setStyleSheet(
-            "color:#888780;font-size:12px;border:none;")
+            f"color:{theme.muted()};font-size:12px;border:none;")
         self.detail_lbl.setVisible(False)
         bl.addWidget(self.detail_lbl)
 

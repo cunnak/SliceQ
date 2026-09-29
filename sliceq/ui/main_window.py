@@ -29,6 +29,7 @@ from .pages.style_page import StylePage
 from .pages.tasks_page import TasksPage
 from .queue import AnalysisQueue
 from .workers import WorkerPool, guard_ui
+from . import theme
 
 
 class MainWindow(QMainWindow):
@@ -76,7 +77,7 @@ class MainWindow(QMainWindow):
         sl.addWidget(brand)
 
         version = QLabel(f"v{config.VERSION}")
-        version.setStyleSheet("color:#888780;font-size:11px;padding:0 6px 10px 6px;")
+        version.setStyleSheet(f"color:{theme.muted()};font-size:11px;padding:0 6px 10px 6px;")
         sl.addWidget(version)
 
         self.nav = QListWidget()
@@ -91,7 +92,7 @@ class MainWindow(QMainWindow):
 
         self.env_hint = QLabel("")
         self.env_hint.setWordWrap(True)
-        self.env_hint.setStyleSheet("color:#888780;font-size:11px;padding:6px;")
+        self.env_hint.setStyleSheet(f"color:{theme.muted()};font-size:11px;padding:6px;")
         sl.addWidget(self.env_hint)
 
         lay.addWidget(side)
@@ -109,13 +110,15 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.settings_page)   # 3
         # 任务页双击 / 右键「查看候选清单」→ 切到清单页
         self.tasks_page.task_opened.connect(self._open_clips)
+        # 设置页改了主题 ⇒ 重建界面（各页面的颜色是构造时求值的，见 theme 注释）
+        self.settings_page.theme_changed.connect(self._on_theme_changed)
         lay.addWidget(self.stack, 1)
 
-        self.setStyleSheet("""
-            QWidget#sidebar { background: rgba(128,128,128,0.06); }
-            QListWidget#nav { border: none; background: transparent; font-size: 14px; }
-            QListWidget#nav::item { padding: 9px 10px; border-radius: 8px; }
-            QListWidget#nav::item:selected { background: rgba(128,128,128,0.18); }
+        self.setStyleSheet(f"""
+            QWidget#sidebar {{ background: {theme.panel()}; }}
+            QListWidget#nav {{ border: none; background: transparent; font-size: 14px; }}
+            QListWidget#nav::item {{ padding: 9px 10px; border-radius: 8px; }}
+            QListWidget#nav::item:selected {{ background: {theme.selected()}; }}
         """)
 
         self._probe_env()
@@ -178,6 +181,97 @@ class MainWindow(QMainWindow):
         """分析设置对话框确认后，切页并启动流水线。"""
         self.nav.setCurrentRow(1)
         self.clips_page.start_analysis(task_id, opts, auto_continue)
+
+    # ─────────────────────────────────────────────────────
+    # 主题（v0.1.5 新增）
+    # ─────────────────────────────────────────────────────
+    def _is_busy(self) -> bool:
+        """有没有**长任务**在跑（分析 / 精析 / 批量队列）。
+
+        ⚠️ **不要**用 `pool.active_count() > 0` 当判据 ——
+           启动时的环境体检（`_probe_env`）也走这个线程池，
+           于是"刚打开程序就想换主题"会被误判成"正在分析"、拦下弹窗。
+           （实测踩到：自测直接卡在模态对话框上 —— offscreen 下没人点它。）
+
+        ⚠️ 也**不要**用 `clips_page._worker is not None` ——
+           那个属性原先跑完不清空，是"上一次的引用"，不是"是否在跑"。
+
+        导出/复制是**独立对话框**，不随主窗口重建，所以不必考虑。
+        """
+        try:
+            q = getattr(self, "analysis_queue", None)
+            if q is not None and q.is_running():
+                return True
+            cp = getattr(self, "clips_page", None)
+            if cp is not None and cp.is_analyzing():
+                return True
+        except Exception:                        # noqa: BLE001
+            return False
+        return False
+
+    @guard_ui
+    def _on_theme_changed(self, mode: str) -> None:
+        """设置页改了主题 —— 应用新主题并重建界面。
+
+        ⚠️ **有任务在跑时不重建**：
+           各页面的进度是**实例状态**（挂在旧页面对象上），重建会把它丢掉，
+           而 worker 还在跑 ⇒ 用户看到"进度条凭空消失、分析却继续在跑"。
+           那种"界面在说谎"的困惑，比"主题晚一点生效"严重得多，
+           所以宁可拒绝并说清楚。
+        """
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        if self._is_busy():
+            QMessageBox.information(
+                self, "稍等一下",
+                "正在分析或导出，现在换主题会把进度显示清空。\n"
+                "等这一步结束（或先取消）再换，嗯？")
+            # 把下拉框退回已保存的值 —— 否则界面显示"已选深色"却没生效
+            self.settings_page.sync_theme_combo()
+            return
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        # ★ 落盘放在这里、且在"决定要切"之后 ——
+        #   设置页只负责发信号。反过来（先落盘再问）会造成
+        #   「下拉框退回了、设置里却已经改了」，下次启动主题莫名变掉。
+        try:
+            from .. import settings as _settings
+            _settings.set("ui_theme", str(mode))
+        except Exception:                        # noqa: BLE001
+            # ⚠️ 本模块没有模块级 `log`（别处用的是内联 getLogger），
+            #    这里顺手写了个 `log.exception` 会**抛 NameError**，
+            #    把"保存失败"这个真原因盖掉。
+            logging.getLogger("sliceq.ui").exception(
+                "保存主题设置失败（本次仍会切换）")
+        theme.apply(app, mode)
+        self.rebuild_for_theme()
+
+    def rebuild_for_theme(self) -> None:
+        """重建整个界面，让新主题完全生效。
+
+        为什么非重建不可
+        ----------------
+        各页面有 **90+ 处** `setStyleSheet(f"color:{...}")`，颜色是
+        **构造时求值**的。`theme.apply()` 只换全局样式表，改不动这些
+        已经写进控件里的值 ⇒ 不重建就会出现"侧栏已是新主题、
+        内容还是旧主题"的花屏。
+
+        保留：当前页索引、分析队列（队列由 `__init__` 持有，不在 `_build` 里）。
+        丢失：页面上的临时状态（进度文字、已勾选的候选行等）——
+              换主题是低频操作，这个代价可以接受；
+              **有任务在跑时会被 `_on_theme_changed` 拦下**，见那里。
+        """
+        idx = self.nav.currentRow() if hasattr(self, "nav") else 0
+        old = self.centralWidget()
+        self._build()                       # 内部会 setCentralWidget(新的)
+        if old is not None:
+            old.setParent(None)
+            old.deleteLater()
+        self._refresh_nav()
+        if self.nav.count():
+            self.nav.setCurrentRow(max(0, min(idx, self.nav.count() - 1)))
 
     @guard_ui
     def _refresh_nav(self) -> None:
