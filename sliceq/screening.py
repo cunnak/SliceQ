@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import asr, concurrency, config, ffmpeg_tools, prompts
+from . import asr, concurrency, config, ffmpeg_tools, subproc, prompts
 from .analyzer import AnalyzeResult, Transport, Usage
 
 ProgressCb = Callable[[float, str], None]
@@ -167,7 +167,7 @@ def build_contact_sheet(video: str | Path, out: str | Path,
            "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
            "-i", str(video), "-vf", vf, "-frames:v", "1", str(o)]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+        r = subproc.run(cmd, capture_output=True, text=True, timeout=300,
                            encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return None

@@ -51,7 +51,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import settings
+from . import subproc, settings
 
 EXE_NAME = "VideoCaptioner.exe"
 ENV_VAR = "VIDEOCAPTIONER_PATH"
@@ -256,7 +256,7 @@ def launch(info: dict | None = None) -> tuple[bool, str]:
         if sys.platform == "win32":
             # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
             flags = 0x00000008 | 0x00000200
-        subprocess.Popen([str(exe)], cwd=str(exe.parent),
+        subproc.popen([str(exe)], cwd=str(exe.parent),
                          creationflags=flags, close_fds=True)
         return True, f"已启动 VideoCaptioner（{exe.parent}）"
     except Exception as exc:                     # noqa: BLE001

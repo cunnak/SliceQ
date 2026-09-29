@@ -28,7 +28,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from .. import config, ffmpeg_tools, subtitle_style
+from .. import config, ffmpeg_tools, subproc, subtitle_style
 
 # 预览用的示例文字。
 # 长文本刻意选得够长，好让用户一眼看出"会自动换行、不会溢出被裁"。
@@ -130,7 +130,7 @@ def render_preview(preset: subtitle_style.SubtitlePreset, *,
     argv += ["-vf", vf, "-frames:v", "1", str(out)]
 
     try:
-        r = subprocess.run(argv, capture_output=True, text=True,
+        r = subproc.run(argv, capture_output=True, text=True,
                            timeout=60, cwd=str(cwd) if cwd else None,
                            encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:

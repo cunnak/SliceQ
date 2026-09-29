@@ -1,7 +1,30 @@
 # SliceQ 开发任务拆解（交接 DeepSeek-V4.1-Flash）
 
-> 版本：v1.24｜日期：2026-09-28
+> 版本：v1.25｜日期：2026-09-29
 > 用法：本文件按阶段交接。每阶段开头有【交接提示词】，可直接粘贴给 deepseek-flash 开工作会话；阶段完成后按【验收标准】逐条验证，通过再进下一阶段。配合阅读：PRD-SliceQ.md（需求）、TECH-DESIGN.md（架构）、reports/ 与 stage0/reports/（各阶段实测证据）。
+>
+> **🟢 v1.25 变更（v0.1.4：运行时不再闪出终端窗口）**：
+> 1. **根因**：SliceQ 是 GUI 子系统（`--windowed` ⇒ 无控制台），
+>    ffmpeg/ffprobe 是 **console 子系统**（PE `Subsystem=3`）。
+>    Windows 在这种组合下会**为子进程新建控制台宿主窗口**
+>    （类名 `CASCADIA_HOSTING_WINDOW_CLASS`，即 Win11 的终端宿主）。
+>    ⚠️ **重定向救不了** —— 19 处调用原本全是 `capture_output`，照样弹；
+>    必须显式 `CREATE_NO_WINDOW`。四轮对照：不加 flag **3/3** 触发、
+>    加 flag **0/3**、`DEVNULL` 不加 flag **3/3**。
+> 2. **修法**：新增 **`sliceq/subproc.py` 作为唯一入口**（默认注入
+>    `CREATE_NO_WINDOW`，显式传入的 flags 被尊重），19 处调用点全部改走它。
+>    **静态检查自测** `selftest_subproc_flags.py`(**16**) 防漏：
+>    `sliceq/` 下不得出现裸 `subprocess.run/Popen`（含对照组证明检查有牙）。
+> 3. **真机 A/B**：同一套 `SetWinEventHook` 检测下，
+>    v0.1.3 启动一次 **6 个** 窗口事件 → v0.1.4 **0 个**
+>    （且确认两版都真的启动成功）。
+> 4. **过程教训（已写进报告）**：
+>    ① **检测"一闪而过"必须用事件（`SetWinEventHook`），不能用轮询** ——
+>       前两版探针用轮询，报的"不弹"是**假阴性**，白花两轮。
+>    ② 模块名 `proc` 与既有局部变量撞名 ⇒ `proc = proc.popen(...)` 自我赋值
+>       ⇒ `UnboundLocalError`，只在运行时暴露。已改名 **`subproc`**。
+>    ③ 验证脚本自己把 `phase` 从列表重绑成字符串 ⇒ 明明抓到 3 个事件却判
+>       "钩子失效"。**统计口径写错会把"通过"判成"失败"。**
 >
 > **🟢 v1.24 变更（v0.1.3：转录真正成了缓存 + v0.1.2 端到端验证通过）**：
 > 1. **`clip` 表 0 行 → 6 行**（真机跑通）。用修复后的代码、复用库里 1825 条
@@ -969,6 +992,21 @@
       判据之一很干净：**传一个不存在的音频路径** ——
       走缓存就不会碰 ffmpeg（能正常返回），没走缓存就会失败。
       已发 **v0.1.3**
+
+【★ v0.1.4（2026-09-29，运行时不再闪终端窗口）】
+
+- [x] **子进程统一静默化** —— 全部 19 处调用改走 `sliceq/subproc.py`
+      **根因**：GUI 父进程（无控制台）启动 console 子进程 ⇒ Windows
+      新建控制台宿主窗口（`CASCADIA_HOSTING_WINDOW_CLASS`）。
+      **重定向救不了**（原 19 处全有 `capture_output`，照样弹）。
+      **真机 A/B**（`probe_exe_console_compare.py`，同一套
+      `SetWinEventHook`）：v0.1.3 启动一次 **6 个** 窗口事件 → v0.1.4 **0 个**，
+      且两版都确认"真的启动了"（否则 0 事件不算证据）。
+      **防漏**：`selftest_subproc_flags.py`(**16**) 静态检查 `sliceq/` 下
+      不得出现裸 `subprocess.run/Popen`（含对照组证明检查有牙）。
+      **兼容性**：输出/退出码/超时语义逐字节一致（5 用例实测）。
+      详细取证与三个过程教训见 `reports/V0.1.4-SILENT-CONSOLE-REPORT.md`。
+      已发 **v0.1.4**（63,181,500 字节 / SHA256 `093346fa…`）
 
 【★ v0.1.2 的端到端真实验证（2026-09-28 深夜补做）】
 

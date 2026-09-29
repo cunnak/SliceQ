@@ -48,13 +48,12 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from . import config, ffmpeg_tools, subtitle, subtitle_style
+from . import config, ffmpeg_tools, subproc, subtitle, subtitle_style
 
 ProgressCb = Callable[[int, int, str], None]
 CancelCb = Callable[[], bool]
@@ -149,7 +148,7 @@ def probe_media(media: str | Path) -> MediaInfo:
     if not ffprobe:
         return info
     try:
-        r = subprocess.run(
+        r = subproc.run(
             [str(ffprobe), "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=r_frame_rate",
              "-show_entries", "format=duration",

@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import (analyzer, asr, concurrency, config, ffmpeg_tools,
-               prompts, screening, store)
+               prompts, screening, store, subproc)
 from .analyzer import Transport, Usage
 from .screening import Candidate
 
@@ -221,7 +221,7 @@ def cut_clip(video: str | Path, out: str | Path, start: float, end: float,
            "-c:a", "aac", "-b:a", audio_bitrate,
            str(o)]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
+        r = subproc.run(cmd, capture_output=True, text=True, timeout=900,
                            encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:
         raise PipelineError(f"切副本超时（{start:.0f}s~{end:.0f}s）") from exc

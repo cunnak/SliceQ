@@ -50,7 +50,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from . import config, enhance as enhance_mod, ffmpeg_tools, store, subtitle, subtitle_style
+from . import config, enhance as enhance_mod, ffmpeg_tools, subproc, store, subtitle, subtitle_style
 
 ProgressCb = Callable[[float, str, int], None]     # ratio, message, done_count
 CancelCb = Callable[[], bool]
@@ -201,7 +201,7 @@ def run_ffmpeg(cmd: Sequence[str], *,
 
     errf = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     try:
-        proc = subprocess.Popen(
+        proc = subproc.popen(
             argv, stdout=subprocess.PIPE, stderr=errf,
             cwd=str(cwd) if cwd else None,
             text=True, encoding="utf-8", errors="replace", bufsize=1)

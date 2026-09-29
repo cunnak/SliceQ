@@ -36,7 +36,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import asr_models, config, ffmpeg_tools
+from . import asr_models, config, ffmpeg_tools, subproc
 
 log = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ def _run_ffmpeg(args: list[str], timeout: int = 3600,
     修法：`communicate(timeout=...)` 会**用后台线程并发读两个管道**；
     超时抛 `TimeoutExpired`，但**已读到的数据不会丢**，可以继续 communicate。
     """
-    proc = subprocess.Popen(
+    proc = subproc.popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace")
     t0 = time.time()
@@ -703,7 +703,7 @@ def _wav_duration(wav: Path) -> float:
     if not probe:
         return 0.0
     try:
-        out = subprocess.run(
+        out = subproc.run(
             [str(probe), "-v", "error", "-show_entries", "format=duration",
              "-of", "json", str(wav)],
             capture_output=True, text=True, timeout=60,

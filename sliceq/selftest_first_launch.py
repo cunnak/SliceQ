@@ -31,6 +31,8 @@ import sys
 import time
 from pathlib import Path
 
+# ⚠️ 本文件是**当脚本直接跑**的（`python sliceq/selftest_first_launch.py`），
+#    `__package__` 为 None ⇒ 只能用**绝对导入**，且必须在 sys.path 补好之后。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 PASS, FAIL, SKIPPED = [], [], []
@@ -174,11 +176,11 @@ def main() -> int:
               "这是阶段 2 转录的硬前提")
 
         # 实际跑一次 ffmpeg，确认不是"能列出滤镜但不能用"
-        import subprocess
+        from sliceq import subproc          # 绝对导入（见文件头的说明）
         try:
-            out = subprocess.run([str(path), "-hide_banner", "-version"],
-                                 capture_output=True, text=True, timeout=20,
-                                 encoding="utf-8", errors="replace").stdout
+            out = subproc.run([str(path), "-hide_banner", "-version"],
+                           capture_output=True, text=True, timeout=20,
+                           encoding="utf-8", errors="replace").stdout
             check("ffmpeg 可实际执行", "ffmpeg version" in out,
                   out.splitlines()[0] if out else "")
         except Exception as exc:

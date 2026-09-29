@@ -22,12 +22,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
 import zipfile
 from pathlib import Path
 from typing import Callable
 
-from . import config
+from . import config, subproc
 
 ProgressCb = Callable[[int, int, str], None]   # (已下载字节, 总字节, 阶段描述)
 
@@ -173,7 +172,7 @@ def probe_video_size(media: str | Path,
     if not ffprobe:
         return 0, 0
     try:
-        r = subprocess.run(
+        r = subproc.run(
             [str(ffprobe), "-v", "error", "-select_streams", "v:0",
              "-show_entries",
              "stream=width,height:stream_side_data=rotation",
@@ -213,7 +212,7 @@ def has_audio_stream(media: str | Path,
     if not ffprobe:
         return True
     try:
-        r = subprocess.run(
+        r = subproc.run(
             [str(ffprobe), "-v", "error", "-select_streams", "a:0",
              "-show_entries", "stream=codec_type", "-of", "json", str(media)],
             capture_output=True, text=True, timeout=30,
@@ -241,7 +240,7 @@ def set_manual_path(path: str) -> None:
 def list_filters(ffmpeg: Path, timeout: int = 20) -> set[str]:
     """取 ffmpeg 支持的滤镜名集合。失败返回空集。"""
     try:
-        out = subprocess.run(
+        out = subproc.run(
             [str(ffmpeg), "-hide_banner", "-filters"],
             capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace",
@@ -300,7 +299,7 @@ def probe_environment() -> dict:
         return {"ok": False, "reason": "missing", "ffmpeg": None,
                 "message": "未检测到 FFmpeg"}
     try:
-        ver = subprocess.run(
+        ver = subproc.run(
             [str(ff), "-hide_banner", "-version"],
             capture_output=True, text=True, timeout=15,
             encoding="utf-8", errors="replace",

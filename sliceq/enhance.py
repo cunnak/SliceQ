@@ -36,11 +36,10 @@
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, ffmpeg_tools, subtitle_style
+from . import config, ffmpeg_tools, subproc, subtitle_style
 
 # ─────────────────────────────────────────────────────────────
 # BGM 曲库
@@ -272,7 +271,7 @@ def _sc_has_level_sc() -> bool:
         _SC_LEVEL_CACHE = False
         return False
     try:
-        r = subprocess.run([str(ff), "-hide_banner", "-h", "filter=sidechaincompress"],
+        r = subproc.run([str(ff), "-hide_banner", "-h", "filter=sidechaincompress"],
                            capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=30)
         _SC_LEVEL_CACHE = "level_sc" in (r.stdout or "") + (r.stderr or "")
@@ -544,7 +543,7 @@ def pick_best_frame(video: str | Path, start: float, end: float,
         old.unlink(missing_ok=True)
 
     for i, t in enumerate(times):
-        subprocess.run(
+        subproc.run(
             [str(ff), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
              "-ss", f"{t:.3f}", "-i", str(video),
              "-vf", "scale=480:-2", "-frames:v", "1",
@@ -563,7 +562,7 @@ def pick_best_frame(video: str | Path, start: float, end: float,
 
     # 用选中的时刻抽全尺寸帧
     full = out_dir / f"{stem}_base.png"
-    r = subprocess.run(
+    r = subproc.run(
         [str(ff), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
          "-ss", f"{times[best_i]:.3f}", "-i", str(video),
          "-frames:v", "1", str(full)],

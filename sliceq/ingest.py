@@ -10,11 +10,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Callable
 
-from . import config, ffmpeg_tools, store
+from . import config, ffmpeg_tools, subproc, store
 
 ProgressCb = Callable[[int, int, str], None]   # (已下载字节, 总字节, 描述)
 CancelCb = Callable[[], bool]                  # 返回 True 表示应中止
@@ -52,7 +51,7 @@ def probe_media(path: str | Path) -> dict:
         "-of", "json", str(path),
     ]
     try:
-        raw = subprocess.run(cmd, capture_output=True, text=True,
+        raw = subproc.run(cmd, capture_output=True, text=True,
                              timeout=60, encoding="utf-8",
                              errors="replace").stdout
         data = json.loads(raw or "{}")

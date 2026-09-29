@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -36,7 +35,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from ... import analyzer, config, ffmpeg_tools, pipeline, store
+from ... import analyzer, config, ffmpeg_tools, pipeline, subproc, store
 from ..workers import guard_ui
 from .copy_dialog import CopyDialog
 
@@ -463,7 +462,7 @@ class ClipsPage(QWidget):
         out = out_dir / f"preview_{cid}.mp4"
         if not (out.exists() and out.stat().st_size > 1024):
             dur = max(1.0, c["end"] - c["start"])
-            r = subprocess.run(
+            r = subproc.run(
                 [str(ff), "-hide_banner", "-loglevel", "error", "-y",
                  "-ss", f"{c['start']:.3f}", "-t", f"{dur:.3f}",
                  "-i", str(src), "-c", "copy", "-avoid_negative_ts", "make_zero",
@@ -472,7 +471,7 @@ class ClipsPage(QWidget):
                 encoding="utf-8", errors="replace")
             if r.returncode != 0 or not out.exists():
                 # `-c copy` 依赖关键帧对齐，切点不巧就会失败 —— 退回重编码
-                subprocess.run(
+                subproc.run(
                     [str(ff), "-hide_banner", "-loglevel", "error", "-y",
                      "-ss", f"{c['start']:.3f}", "-t", f"{dur:.3f}",
                      "-i", str(src), "-c:v", "libx264", "-preset", "veryfast",
